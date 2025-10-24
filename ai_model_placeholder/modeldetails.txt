@@ -1,0 +1,17 @@
+# Create placeholder AI model files (you'll replace these with your actual files)
+touch ai_models/Image_based_Search_Model.pth
+touch ai_models/imagenet_classes.txt
+
+# Add sample content to imagenet_classes.txt
+cat > ai_models/imagenet_classes.txt << EOL
+tench, Tinca tinca
+goldfish, Carassius auratus
+great white shark, white shark, man-eater, man-eating shark, Carcharodon carcharias
+tiger shark, Galeocerdo cuvieri
+hammerhead, hammerhead shark
+electric ray, crampfish, numbfish, torpedo
+stingray
+cock
+hen
+ostrich, Struthio camelus
+EOL
