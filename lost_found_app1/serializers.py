@@ -51,17 +51,17 @@ class RegisterSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         errors = {}
 
-        # Required fields validation
+        # Required field checks
         required_fields = ['username', 'email', 'password', 'password2', 'first_name', 'last_name', 'user_type']
         for field in required_fields:
             if not attrs.get(field):
                 errors[field] = ['This field is required.']
 
-        # Check if passwords match
+        # Password match check
         if attrs.get('password') and attrs.get('password2') and attrs['password'] != attrs['password2']:
             errors['password2'] = ['Passwords do not match.']
 
-        # Check if username/email already exist
+        # Uniqueness checks
         if User.objects.filter(username=attrs.get('username')).exists():
             errors['username'] = ['A user with this username already exists.']
 
@@ -75,44 +75,26 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         """
-        Create a user that accepts:
-        - uploaded files,
-        - URLs,
-        - or existing local filenames (inside MEDIA_ROOT/profile_images/)
+        Create user and handle both file uploads and image URLs.
         """
         password = validated_data.pop('password')
         validated_data.pop('password2', None)
 
         profile_image = validated_data.get('profile_image')
 
-        # Handle profile image if provided as string
-        if isinstance(profile_image, str):
-            # Case 1: Remote URL (http/https)
-            if profile_image.startswith(('http://', 'https://')):
-                try:
-                    response = urlopen(profile_image)
-                    file_name = os.path.basename(urlparse(profile_image).path)
-                    if not file_name:
-                        file_name = f"{uuid.uuid4()}.jpg"
-                    validated_data['profile_image'] = ContentFile(response.read(), name=file_name)
-                except Exception as e:
-                    raise serializers.ValidationError({
-                        "profile_image": f"Could not download image from URL: {str(e)}"
-                    })
+        # Handle if the profile_image is a URL string
+        if isinstance(profile_image, str) and profile_image.startswith(('http://', 'https://')):
+            try:
+                response = urlopen(profile_image)
+                file_name = os.path.basename(urlparse(profile_image).path)
+                if not file_name:
+                    file_name = f"{uuid.uuid4()}.jpg"
+                file_data = response.read()
+                validated_data['profile_image'] = ContentFile(file_data, name=file_name)
+            except Exception as e:
+                raise serializers.ValidationError({"profile_image": f"Could not download image: {str(e)}"})
 
-            # Case 2: Local filename (relative to media/profile_images)
-            else:
-                media_path = os.path.join('media', 'profile_images', profile_image)
-                if os.path.exists(media_path):
-                    with open(media_path, 'rb') as f:
-                        validated_data['profile_image'] = ContentFile(f.read(), name=profile_image)
-                else:
-                    # File not found, just ignore (user can still register)
-                    validated_data['profile_image'] = None
-
-        # If it's an actual uploaded file, Django handles it automatically
-
-        # Create user instance
+        # Create user
         user = User(**validated_data)
         user.set_password(password)
         user.save()
