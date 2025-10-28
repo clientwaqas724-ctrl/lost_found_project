@@ -16,7 +16,7 @@ class User(AbstractUser):
         ('resident', 'DHUAM Resident'),
         ('admin', 'Administrator'),
     )
-    
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user_type = models.CharField(max_length=20, choices=USER_TYPE_CHOICES, default='resident')
     phone_number = models.CharField(max_length=15, blank=True, null=True)
@@ -33,16 +33,24 @@ class User(AbstractUser):
 
     def save(self, *args, **kwargs):
         """
-        Fixed save method that doesn't break superuser permissions
+        Preserve superuser permissions and handle remote image URLs.
         """
-        # If user is already a superuser (created via createsuperuser), preserve that
+        # Handle remote URL for profile image if provided
+        if isinstance(self.profile_image, str) and self.profile_image.startswith("http"):
+            try:
+                response = requests.get(self.profile_image)
+                if response.status_code == 200:
+                    file_name = f"{uuid.uuid4()}.jpg"
+                    self.profile_image.save(file_name, ContentFile(response.content), save=False)
+            except Exception as e:
+                print(f"⚠️ Failed to fetch image from URL: {e}")
+
+        # Superuser logic
         if self.is_superuser:
-            # Superuser should always have admin privileges
             self.user_type = 'admin'
             self.is_staff = True
             self.is_active = True
         else:
-            # For regular users, set permissions based on user_type
             if self.user_type == 'admin':
                 self.is_staff = True
                 self.is_superuser = True
@@ -56,10 +64,13 @@ class User(AbstractUser):
 
     def __str__(self):
         return f"{self.username} - {self.get_user_type_display()}"
-    
+
     def profile_image_preview(self):
         if self.profile_image:
-            return format_html('<img src="{}" width="50" height="50" style="border-radius: 50%;" />', self.profile_image.url)
+            return format_html(
+                '<img src="{}" width="50" height="50" style="border-radius: 50%;" />',
+                self.profile_image.url
+            )
         return "No Image"
     profile_image_preview.short_description = 'Profile Image'
 ######################################################################################################################################################
@@ -314,4 +325,5 @@ class ImageSearchLog(models.Model):
         ordering = ['-created_at']
     
     def __str__(self):
+
         return f"Image Search - {self.search_type} - {self.created_at.strftime('%Y-%m-%d %H:%M')}"
