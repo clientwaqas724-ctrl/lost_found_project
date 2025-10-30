@@ -238,17 +238,21 @@ def get_all_users(request):
 #################################################################################################################################################
 #################################################################################################################################################
 #####################################################################################
-# Category ViewSet
+#Category ViewSet
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
-    permission_classes = [IsAuthenticated, IsAdminOnly]
 
-    def list(self, request, *args, **kwargs):
-        # Allow all authenticated users to view categories
-        if request.user.is_authenticated:
-            return super().list(request, *args, **kwargs)
-        return Response({"detail": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
+    def get_permissions(self):
+        """
+        Allow all authenticated users to view categories (list/retrieve),
+        but only admins can create, update, or delete categories.
+        """
+        if self.action in ['list', 'retrieve']:
+            permission_classes = [IsAuthenticated]  # all logged-in users can view
+        else:
+            permission_classes = [IsAuthenticated, IsAdminOnly]  # only admins can modify
+        return [permission() for permission in permission_classes]
 #####################################################################################
 # LostItem ViewSet
 class LostItemViewSet(viewsets.ModelViewSet):
@@ -668,4 +672,5 @@ def verify_found_item(request, item_id):
         
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
+
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
