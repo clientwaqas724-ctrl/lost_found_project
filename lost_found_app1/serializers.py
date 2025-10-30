@@ -8,6 +8,7 @@ from django.core.files.base import ContentFile
 from urllib.request import urlopen
 from urllib.parse import urlparse
 import os
+import uuid
 #################################################################################################################################################
 #################################################################################################################################################
 class RegisterSerializer(serializers.ModelSerializer):
@@ -73,28 +74,36 @@ class RegisterSerializer(serializers.ModelSerializer):
 
         return attrs
 
+    ####################################################################################################
     def create(self, validated_data):
         """
-        Create user and handle both file uploads and image URLs.
+        Create user and handle both file uploads, image URLs, and local file paths.
         """
         password = validated_data.pop('password')
         validated_data.pop('password2', None)
 
         profile_image = validated_data.get('profile_image')
 
-        # Handle if the profile_image is a URL string
+        # ✅ Case 1: Image is a URL
         if isinstance(profile_image, str) and profile_image.startswith(('http://', 'https://')):
             try:
                 response = urlopen(profile_image)
-                file_name = os.path.basename(urlparse(profile_image).path)
-                if not file_name:
-                    file_name = f"{uuid.uuid4()}.jpg"
+                file_name = os.path.basename(urlparse(profile_image).path) or f"{uuid.uuid4()}.jpg"
                 file_data = response.read()
                 validated_data['profile_image'] = ContentFile(file_data, name=file_name)
             except Exception as e:
                 raise serializers.ValidationError({"profile_image": f"Could not download image: {str(e)}"})
 
-        # Create user
+        # ✅ Case 2: Image is a local file path (for dev/testing)
+        elif isinstance(profile_image, str) and os.path.exists(profile_image):
+            try:
+                with open(profile_image, 'rb') as f:
+                    file_name = os.path.basename(profile_image)
+                    validated_data['profile_image'] = ContentFile(f.read(), name=file_name)
+            except Exception as e:
+                raise serializers.ValidationError({"profile_image": f"Could not read local file: {str(e)}"})
+
+        # ✅ Case 3: Uploaded file (handled automatically by DRF)
         user = User(**validated_data)
         user.set_password(password)
         user.save()
@@ -416,4 +425,5 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     claimed_items = serializers.IntegerField()
 
     user_registrations_today = serializers.IntegerField()
+
 
