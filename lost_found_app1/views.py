@@ -171,7 +171,9 @@ class UserProfileViewSet(viewsets.GenericViewSet,
                 'user': serializer.data
             }, status=status.HTTP_200_OK)
     ############################################################################################################################
-    #################(new update the password update code)#################
+    ########################################################################
+    # Update Password (requires old password)
+    ########################################################################
     @action(detail=False, methods=['put'], serializer_class=UpdatePasswordSerializer, permission_classes=[])
     def password(self, request):
         """
@@ -184,6 +186,34 @@ class UserProfileViewSet(viewsets.GenericViewSet,
         return Response({
             'message': 'Password updated successfully!'
         }, status=status.HTTP_200_OK)
+
+    ########################################################################
+    # Forgot Password (reset with email only)
+    ########################################################################
+    @action(detail=False, methods=['put'], serializer_class=ForgotPasswordSerializer, permission_classes=[])
+    def forgot_password(self, request):
+        """
+        Reset user password using email only
+        """
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response({
+            'message': 'Password reset successfully!'
+        }, status=status.HTTP_200_OK)
+    ##################################################################################
+    @action(detail=False, methods=['delete'], permission_classes=[IsAuthenticated])
+    def delete_account(self, request):
+        """
+        Delete the currently authenticated user's account
+        """
+        user = request.user
+        user.delete()
+
+        return Response({
+            'message': 'Your account has been deleted successfully.'
+        }, status=status.HTTP_200_OK)
     ##############################################################################################################################
     @action(detail=False, methods=['get'])
     def details(self, request):
@@ -192,13 +222,12 @@ class UserProfileViewSet(viewsets.GenericViewSet,
         """
         serializer = self.get_serializer(self.get_object())
         return Response(serializer.data, status=status.HTTP_200_OK)
-
+    ###############################################################################################################################
     def perform_update(self, serializer):
         serializer.save()
-#################################################################################################################################################
-#################################################################################################################################################
-# Additional convenience views for backward compatibility
-
+########################################################################################################################################################################################################
+#####################################################################################################################################################################################################
+#####################################################################Additional convenience views for backward compatibility####################################################################
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_current_user(request):
@@ -674,4 +703,5 @@ def verify_found_item(request, item_id):
     except FoundItem.DoesNotExist:
 
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
