@@ -170,20 +170,21 @@ class UserProfileViewSet(viewsets.GenericViewSet,
                 'message': 'Profile updated successfully!',
                 'user': serializer.data
             }, status=status.HTTP_200_OK)
-
-    @action(detail=False, methods=['put'], serializer_class=UpdatePasswordSerializer)
+    ############################################################################################################################
+    #################(new update the password update code)#################
+    @action(detail=False, methods=['put'], serializer_class=UpdatePasswordSerializer, permission_classes=[])
     def password(self, request):
         """
-        Update user password
+        Update user password using email and old password
         """
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = serializer.save()
-        
+        serializer.save()
+
         return Response({
             'message': 'Password updated successfully!'
         }, status=status.HTTP_200_OK)
-
+    ##############################################################################################################################
     @action(detail=False, methods=['get'])
     def details(self, request):
         """
@@ -194,7 +195,6 @@ class UserProfileViewSet(viewsets.GenericViewSet,
 
     def perform_update(self, serializer):
         serializer.save()
-
 #################################################################################################################################################
 #################################################################################################################################################
 # Additional convenience views for backward compatibility
@@ -674,3 +674,4 @@ def verify_found_item(request, item_id):
     except FoundItem.DoesNotExist:
 
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
