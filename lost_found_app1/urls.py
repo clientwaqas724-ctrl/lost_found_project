@@ -12,7 +12,8 @@ from .views import (
     user_dashboard,
     admin_dashboard,
     verify_lost_item,
-    verify_found_item
+    verify_found_item,
+    image_based_search
 )
 # Create router and register viewsets
 router= DefaultRouter()
@@ -41,6 +42,7 @@ urlpatterns = [
     path('dashboard/admin/', admin_dashboard, name='admin-dashboard'),
     # Manual Image Search
     path('search/manual-image/', manual_image_search, name='manual-image-search'),
+    path('image-based-search/', image_based_search, name='image_based_search'),
     # Admin Verification URLs
     path('admin/verify/lost-item/<uuid:item_id>/', verify_lost_item, name='verify-lost-item'),
     path('admin/verify/found-item/<uuid:item_id>/', verify_found_item, name='verify-found-item'),
@@ -48,4 +50,5 @@ urlpatterns = [
 
 
 ]
+
 
