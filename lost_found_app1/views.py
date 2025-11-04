@@ -45,6 +45,8 @@ from .models import (
 ################################################################################################################################
 from .serializers import *
 #####################################################################################
+from .models import ImageFeature, generate_image_embedding, LostItem, FoundItem ####========> new updated
+import numpy as np  ##############==> new updated==>
 ##############################################################################################################################################################
 #########################################################################################################################################################
 def home(request):
@@ -703,5 +705,53 @@ def verify_found_item(request, item_id):
     except FoundItem.DoesNotExist:
 
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+################################################################################################################################
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def image_based_search(request):
+    """
+    Upload an image and find visually similar lost/found items using deep embeddings.
+    """
+    uploaded_image = request.FILES.get('image')
+    search_type = request.data.get('search_type', 'found')  # or 'lost'
+    max_results = int(request.data.get('max_results', 10))
+
+    if not uploaded_image:
+        return Response({"error": "No image provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Generate embedding for the uploaded image
+    query_emb = generate_image_embedding(uploaded_image)
+    if query_emb is None:
+        return Response({"error": "Could not process image."}, status=status.HTTP_400_BAD_REQUEST)
+
+    query_vec = np.frombuffer(query_emb, dtype=np.float32)
+
+    # Retrieve stored embeddings of same item type
+    db_features = ImageFeature.objects.filter(item_type=search_type)
+    similarities = []
+    for feature in db_features:
+        vec = np.frombuffer(feature.embedding, dtype=np.float32)
+        sim = np.dot(query_vec, vec)  # cosine similarity
+        similarities.append((feature.item_id, sim))
+
+    # Sort by similarity and pick top results
+    similarities.sort(key=lambda x: x[1], reverse=True)
+    top_ids = [s[0] for s in similarities[:max_results]]
+
+    # Fetch matched items
+    if search_type == 'lost':
+        matched_items = LostItem.objects.filter(id__in=top_ids)
+        serializer = LostItemSerializer(matched_items, many=True, context={'request': request})
+    else:
+        matched_items = FoundItem.objects.filter(id__in=top_ids)
+        serializer = FoundItemSerializer(matched_items, many=True, context={'request': request})
+
+    return Response({
+        'search_metadata': {
+            'search_type': search_type,
+            'results_count': len(serializer.data)
+        },
+        'results': serializer.data
+    }, status=status.HTTP_200_OK)
 
 
