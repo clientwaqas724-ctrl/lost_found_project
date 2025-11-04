@@ -231,25 +231,36 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
 #################################################################################################################################################
 #################################################################################################################################################
+#################(new update the password update code)#################
 class UpdatePasswordSerializer(serializers.Serializer):
-    """Serializer for changing user password."""
+    """Serializer for updating password using email and old password."""
+    email = serializers.EmailField(required=True)
     old_password = serializers.CharField(write_only=True, required=True, style={'input_type': 'password'})
     new_password = serializers.CharField(write_only=True, required=True, validators=[validate_password], style={'input_type': 'password'})
     confirm_password = serializers.CharField(write_only=True, required=True, style={'input_type': 'password'})
-    
-    def validate(self, attrs):
-        user = self.context['request'].user
 
-        if not user.check_password(attrs.get('old_password')):
+    def validate(self, attrs):
+        email = attrs.get('email')
+        old_password = attrs.get('old_password')
+        new_password = attrs.get('new_password')
+        confirm_password = attrs.get('confirm_password')
+
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            raise serializers.ValidationError({"email": "No user found with this email address."})
+
+        if not user.check_password(old_password):
             raise serializers.ValidationError({"old_password": "Old password is incorrect."})
 
-        if attrs.get('new_password') != attrs.get('confirm_password'):
+        if new_password != confirm_password:
             raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
 
+        attrs['user'] = user
         return attrs
 
     def save(self, **kwargs):
-        user = self.context['request'].user
+        user = self.validated_data['user']
         user.set_password(self.validated_data['new_password'])
         user.save()
         return user
@@ -425,5 +436,6 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     claimed_items = serializers.IntegerField()
 
     user_registrations_today = serializers.IntegerField()
+
 
 
