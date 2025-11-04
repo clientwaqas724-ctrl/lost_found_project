@@ -10,6 +10,14 @@ import uuid
 from datetime import date
 from django.utils.html import format_html
 ######################################################################################################################################################
+import numpy as np
+from io import BytesIO
+from PIL import Image
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2, preprocess_input
+from tensorflow.keras.preprocessing import image as keras_image
+from tensorflow.keras.models import Model
 ######################################################################################################################################################
 class User(AbstractUser):
     USER_TYPE_CHOICES = (
@@ -327,4 +335,65 @@ class ImageSearchLog(models.Model):
     def __str__(self):
 
         return f"Image Search - {self.search_type} - {self.created_at.strftime('%Y-%m-%d %H:%M')}"
+#######################################################################################################################################################
+# Preload MobileNetV2 model once (lightweight feature extractor)
+mobilenet_model = MobileNetV2(weights='imagenet', include_top=False, pooling='avg')
+
+class ImageFeature(models.Model):
+    """
+    Stores precomputed embeddings (feature vectors) for each item image
+    to enable image-based search.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    item_type = models.CharField(max_length=10, choices=(('lost', 'Lost'), ('found', 'Found')))
+    item_id = models.UUIDField()
+    embedding = models.BinaryField()  # Serialized NumPy vector
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.item_type.title()} Item Feature ({self.item_id})"
+
+
+def generate_image_embedding(img_file):
+    """
+    Generates a normalized feature vector (embedding) from an image using MobileNetV2.
+    """
+    try:
+        img = Image.open(img_file).convert("RGB")
+        img = img.resize((224, 224))
+        x = keras_image.img_to_array(img)
+        x = np.expand_dims(x, axis=0)
+        x = preprocess_input(x)
+        features = mobilenet_model.predict(x)[0]
+        features = features / np.linalg.norm(features)  # Normalize vector
+        return features.tobytes()
+    except Exception as e:
+        print("Embedding generation error:", e)
+        return None
+
+
+# === Auto-generate embeddings when LostItem or FoundItem is saved ===
+
+@receiver(post_save, sender='lost_found_app1.LostItem')  # replace 'yourapp' with actual app name
+def create_lost_item_embedding(sender, instance, **kwargs):
+    if instance.item_image:
+        emb = generate_image_embedding(instance.item_image)
+        if emb:
+            ImageFeature.objects.update_or_create(
+                item_type='lost',
+                item_id=instance.id,
+                defaults={'embedding': emb}
+            )
+
+@receiver(post_save, sender='lost_found_app1.FoundItem')
+def create_found_item_embedding(sender, instance, **kwargs):
+    if instance.item_image:
+        emb = generate_image_embedding(instance.item_image)
+        if emb:
+            ImageFeature.objects.update_or_create(
+                item_type='found',
+                item_id=instance.id,
+                defaults={'embedding': emb}
+            )
+
 
