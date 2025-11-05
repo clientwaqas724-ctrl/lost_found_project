@@ -445,12 +445,41 @@ class ImageSearchLogSerializer(serializers.ModelSerializer):
 
 #################################################################################################################################################
 class ManualImageSearchSerializer(serializers.Serializer):
-    search_query = serializers.CharField(required=True)
-    search_type = serializers.ChoiceField(choices=[('lost', 'Lost Items'), ('found', 'Found Items')], required=True)
-    color_filters = serializers.CharField(required=False, allow_blank=True)
-    category_filters = serializers.CharField(required=False, allow_blank=True)
-    max_results = serializers.IntegerField(default=50, min_value=1, max_value=100)
+    """
+    Enhanced serializer for manual image search.
+    All fields are optional and non-blocking to allow flexible search queries.
+    """
+    search_query = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default=''
+    )
 
+    search_type = serializers.ChoiceField(
+        choices=[('lost', 'Lost Items'), ('found', 'Found Items')],
+        required=False,
+        allow_blank=True,
+        default=''
+    )
+
+    color_filters = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default=''
+    )
+
+    category_filters = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default=''
+    )
+
+    max_results = serializers.IntegerField(
+        required=False,
+        default=50,
+        min_value=1,
+        max_value=100
+    )
 #################################################################################################################################################
 class DashboardStatsSerializer(serializers.Serializer):
     total_lost_items = serializers.IntegerField()
@@ -477,6 +506,7 @@ class ImageFeatureSerializer(serializers.ModelSerializer):
     class Meta:
         model = ImageFeature
         fields = ['id', 'item_type', 'item_id', 'created_at']
+
 
 
 
