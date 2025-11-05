@@ -414,22 +414,9 @@ class NotificationViewSet(viewsets.ModelViewSet):
 
 
 ##################################################################################################################################################################################################
-# Ultimate Enhanced Manual Image Search API
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def manual_image_search(request):
-    """
-    AI-like Smart Image Search API
-    --------------------------------
-    Flexible, context-aware text search across Lost and Found items.
-    Supports robust fallbacks:
-      (1) If search_type='lost' but no query → returns all Lost items.
-      (2) If only category given → returns all Lost + Found items of that category.
-      (3) If category='all' or missing → returns both Lost + Found.
-      (4) If only colors given → returns all Lost + Found items matching those colors.
-      (5) If no parameters given at all → returns all recent Lost + Found items (safe default).
-    """
-
     import re, time
     from django.db.models import Q
 
@@ -439,155 +426,127 @@ def manual_image_search(request):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     data = serializer.validated_data
-
-    # --- Extract input safely ---
     search_query = (data.get('search_query') or '').strip()
     search_type = (data.get('search_type') or '').strip().lower()
     color_filters = (data.get('color_filters') or '').strip()
     category_filters = (data.get('category_filters') or '').strip()
     max_results = data.get('max_results', 50)
 
-    # --- Prepare token lists ---
     search_terms = [t.strip().lower() for t in re.split(r'[, ]+', search_query) if t.strip()]
     color_terms = [c.strip().lower() for c in re.split(r'[, ]+', color_filters) if c.strip()]
     category_terms = [c.strip().lower() for c in re.split(r'[, ]+', category_filters) if c.strip()]
 
-    # --- Decide models ---
     LostModel = LostItem
     FoundModel = FoundItem
+
     lost_qs, found_qs = LostModel.objects.none(), FoundModel.objects.none()
 
-    # ================================================================
-    #  CASE (5): Nothing given -> return all Lost + Found
-    # ================================================================
+    # ---------------------- Case Handling ----------------------
     if not (search_query or search_type or category_filters or color_filters):
-        lost_qs = LostModel.objects.all()
-        found_qs = FoundModel.objects.all()
+        lost_qs, found_qs = LostModel.objects.all(), FoundModel.objects.all()
 
-    # ================================================================
-    #  CASE (3): category='all' (explicit or implicit)
-    # ================================================================
     elif category_filters.lower() == 'all':
-        lost_qs = LostModel.objects.all()
-        found_qs = FoundModel.objects.all()
+        lost_qs, found_qs = LostModel.objects.all(), FoundModel.objects.all()
         search_type = 'all'
 
-    # ================================================================
-    #  CASE (1): search_type='lost' but no query
-    # ================================================================
     elif search_type == 'lost' and not search_query:
         lost_qs = LostModel.objects.all()
 
-    # ================================================================
-    #  CASE (4): only colors provided
-    # ================================================================
     elif color_filters and not (search_query or category_filters or search_type):
-        lost_qs = LostModel.objects.all()
-        found_qs = FoundModel.objects.all()
+        lost_qs, found_qs = LostModel.objects.all(), FoundModel.objects.all()
 
-    # ================================================================
-    #  CASE (2): only category provided, no type or query
-    # ================================================================
     elif category_filters and not (search_query or search_type):
-        lost_qs = LostModel.objects.all()
-        found_qs = FoundModel.objects.all()
+        lost_qs, found_qs = LostModel.objects.all(), FoundModel.objects.all()
 
-    # ================================================================
-    #  NORMAL SEARCH (query and/or filters present)
-    # ================================================================
     else:
-        # --- Determine type ---
+        # Base queryset
         if search_type == 'lost':
             base_qs = LostModel.objects.all()
         elif search_type == 'found':
             base_qs = FoundModel.objects.all()
         else:
-            lost_qs = LostModel.objects.all()
-            found_qs = FoundModel.objects.all()
-            base_qs = lost_qs.union(found_qs, all=True)
+            lost_qs, found_qs = LostModel.objects.all(), FoundModel.objects.all()
             search_type = 'all'
+            base_qs = None
 
-        queryset = base_qs
+        if base_qs is not None:
+            queryset = base_qs
 
-        # --- Apply flexible search query ---
-        if search_terms:
-            text_q = Q()
-            for term in search_terms:
-                text_q |= (
-                    Q(title__icontains=term)
-                    | Q(description__icontains=term)
-                    | Q(search_tags__icontains=term)
-                    | Q(color_tags__icontains=term)
-                    | Q(material_tags__icontains=term)
-                    | Q(brand__icontains=term)
-                    | Q(color__icontains=term)
-                    | Q(size__icontains=term)
-                    | Q(category__name__icontains=term)
-                    | Q(lost_location__icontains=term)
-                )
-            queryset = queryset.filter(text_q)
+            # Text search
+            if search_terms:
+                text_q = Q()
+                for term in search_terms:
+                    text_q |= (
+                        Q(title__icontains=term)
+                        | Q(description__icontains=term)
+                        | Q(search_tags__icontains=term)
+                        | Q(color_tags__icontains=term)
+                        | Q(material_tags__icontains=term)
+                        | Q(brand__icontains=term)
+                        | Q(color__icontains=term)
+                        | Q(size__icontains=term)
+                        | Q(category__name__icontains=term)
+                        | Q(lost_location__icontains=term)
+                    )
+                queryset = queryset.filter(text_q)
 
-        # --- Apply colors ---
-        if color_terms:
-            cq = Q()
-            for c in color_terms:
-                cq |= Q(color_tags__icontains=c) | Q(color__icontains=c)
-            queryset = queryset.filter(cq)
+            # Color filters
+            if color_terms:
+                cq = Q()
+                for c in color_terms:
+                    cq |= Q(color_tags__icontains=c) | Q(color__icontains=c)
+                queryset = queryset.filter(cq)
 
-        # --- Apply categories ---
-        if category_terms:
-            cat_q = Q()
-            for cat in category_terms:
-                cat_q |= Q(category__name__icontains=cat)
-            queryset = queryset.filter(cat_q)
+            # Category filters
+            if category_terms:
+                cat_q = Q()
+                for cat in category_terms:
+                    cat_q |= Q(category__name__icontains=cat)
+                queryset = queryset.filter(cat_q)
 
-        # Assign back
-        lost_qs = queryset if search_type == 'lost' else lost_qs
-        found_qs = queryset if search_type == 'found' else found_qs
+            if search_type == 'lost':
+                lost_qs = queryset
+            elif search_type == 'found':
+                found_qs = queryset
 
-    # ================================================================
-    #  Combine Lost + Found Results
-    # ================================================================
-    combined_qs = lost_qs.union(found_qs, all=True).order_by('-created_at')
+    # ---------------------- Combine Results (Safe Way) ----------------------
+    # Instead of union filtering, handle them separately then combine in Python
+    lost_items = list(lost_qs[:max_results])
+    found_items = list(found_qs[:max_results])
 
-    # --- Apply final filters again to ensure consistency ---
-    if color_terms:
-        cq = Q()
-        for c in color_terms:
-            cq |= Q(color_tags__icontains=c) | Q(color__icontains=c)
-        combined_qs = combined_qs.filter(cq)
+    combined_items = sorted(
+        list(lost_items) + list(found_items),
+        key=lambda x: getattr(x, "created_at", None) or 0,
+        reverse=True
+    )
 
-    if category_terms and category_filters.lower() != 'all':
-        cat_q = Q()
-        for cat in category_terms:
-            cat_q |= Q(category__name__icontains=cat)
-        combined_qs = combined_qs.filter(cat_q)
-
-    # --- Limit ---
-    results = combined_qs[:max_results]
+    results = combined_items[:max_results]
     search_duration = time.time() - start_time
 
-    # --- Log Search ---
+    # Log Search
     ImageSearchLog.objects.create(
         user=request.user,
         search_type=search_type or 'auto',
         search_query=search_query or 'N/A',
         color_filters=color_filters,
         category_filters=category_filters,
-        results_count=results.count(),
+        results_count=len(results),
         search_duration=search_duration
     )
 
-    # --- Serialize both models (Lost + Found) ---
-    lost_ids = [r.id for r in results if hasattr(r, 'lost_date')]
-    found_ids = [r.id for r in results if hasattr(r, 'found_date')]
+    # Serialize results safely
+    lost_data = LostItemSerializer(
+        [r for r in results if isinstance(r, LostModel)],
+        many=True, context={'request': request}
+    ).data
 
-    lost_data = LostItemSerializer(LostModel.objects.filter(id__in=lost_ids), many=True, context={'request': request}).data
-    found_data = FoundItemSerializer(FoundModel.objects.filter(id__in=found_ids), many=True, context={'request': request}).data
+    found_data = FoundItemSerializer(
+        [r for r in results if isinstance(r, FoundModel)],
+        many=True, context={'request': request}
+    ).data
 
     results_data = lost_data + found_data
 
-    # --- Response ---
     return Response({
         "count": len(results_data),
         "next": None,
@@ -838,6 +797,7 @@ def image_based_search(request):
         },
         'results': serializer.data
     }, status=status.HTTP_200_OK)
+
 
 
 
