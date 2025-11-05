@@ -414,13 +414,14 @@ class NotificationViewSet(viewsets.ModelViewSet):
 
 
 #####################################################################################
-# Manual Image Search API
+# Enhanced Manual Image Search API
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def manual_image_search(request):
     """
-    Fast manual image classification and search API
-    Uses text-based search on tags, colors, materials, and categories
+    Enhanced manual image classification and search API
+    Performs flexible text-based search on tags, colors, materials, brand, and categories.
+    Designed to find items like: "Redmi smartphone with blue cover near Tower A"
     """
     serializer = ManualImageSearchSerializer(data=request.data)
     if not serializer.is_valid():
@@ -428,98 +429,98 @@ def manual_image_search(request):
 
     start_time = time.time()
     data = serializer.validated_data
-    
-    # Build search query
+
+    # --- Extract input parameters ---
     search_query = data['search_query']
     search_type = data['search_type']
     color_filters = data.get('color_filters', '')
     category_filters = data.get('category_filters', '')
     max_results = data.get('max_results', 50)
 
-    # Split search terms
-    search_terms = [term.strip().lower() for term in search_query.split(',') if term.strip()]
-    
-    # Start with appropriate model
-    if search_type == 'lost':
-        queryset = LostItem.objects.all()
-    else:
-        queryset = FoundItem.objects.all()
+    # --- Split search terms by comma and space ---
+    import re
+    search_terms = [term.strip().lower() for term in re.split(r'[, ]+', search_query) if term.strip()]
 
-    # Apply search filters
+    # --- Choose model based on search type ---
+    queryset = LostItem.objects.all() if search_type == 'lost' else FoundItem.objects.all()
+
+    # --- Apply flexible text search ---
     if search_terms:
-        # Create Q objects for each search term across multiple fields
         q_objects = Q()
         for term in search_terms:
             q_objects |= (
                 Q(title__icontains=term) |
                 Q(description__icontains=term) |
                 Q(search_tags__icontains=term) |
+                Q(color_tags__icontains=term) |
+                Q(material_tags__icontains=term) |
                 Q(brand__icontains=term) |
                 Q(color__icontains=term) |
-                Q(category__name__icontains=term)
+                Q(size__icontains=term) |
+                Q(category__name__icontains=term) |
+                Q(lost_location__icontains=term)
             )
         queryset = queryset.filter(q_objects)
 
-    # Apply color filters
+    # --- Apply color filters ---
     if color_filters:
-        color_terms = [color.strip().lower() for color in color_filters.split(',') if color.strip()]
+        color_terms = [color.strip().lower() for color in re.split(r'[, ]+', color_filters) if color.strip()]
         color_q = Q()
         for color in color_terms:
             color_q |= Q(color_tags__icontains=color) | Q(color__icontains=color)
         queryset = queryset.filter(color_q)
 
-    # Apply category filters
+    # --- Apply category filters ---
     if category_filters:
-        category_terms = [cat.strip().lower() for cat in category_filters.split(',') if cat.strip()]
+        category_terms = [cat.strip().lower() for cat in re.split(r'[, ]+', category_filters) if cat.strip()]
         category_q = Q()
         for category in category_terms:
             category_q |= Q(category__name__icontains=category)
         queryset = queryset.filter(category_q)
 
-    # Exclude user's own items from search results
-    if search_type == 'lost':
-        queryset = queryset.exclude(user=request.user)
-    else:
-        queryset = queryset.exclude(user=request.user)
+    # --- Optional: Exclude current user (can disable if you want to see own items) ---
+    # queryset = queryset.exclude(user=request.user)
 
-    # Get results
+    # --- Order by most recent ---
+    queryset = queryset.order_by('-created_at')
+
+    # --- Get final results ---
     results = queryset[:max_results]
     search_duration = time.time() - start_time
 
-    # Log the search
+    # --- Log the search ---
     ImageSearchLog.objects.create(
         user=request.user,
         search_type=search_type,
         search_query=search_query,
         color_filters=color_filters,
         category_filters=category_filters,
-        results_count=len(results),
+        results_count=results.count(),
         search_duration=search_duration
     )
 
-    # Serialize results
-    if search_type == 'lost':
-        serializer_class = LostItemSerializer
-    else:
-        serializer_class = FoundItemSerializer
-
+    # --- Serialize results ---
+    serializer_class = LostItemSerializer if search_type == 'lost' else FoundItemSerializer
     results_data = serializer_class(results, many=True, context={'request': request}).data
 
+    # --- Build response ---
     return Response({
-        'search_metadata': {
-            'query': search_query,
-            'type': search_type,
-            'filters_applied': {
-                'colors': color_filters,
-                'categories': category_filters
+        "count": len(results_data),
+        "next": None,
+        "previous": None,
+        "results": results_data,
+        "search_metadata": {
+            "query": search_query,
+            "type": search_type,
+            "filters_applied": {
+                "colors": color_filters,
+                "categories": category_filters
             },
-            'results_count': len(results),
-            'search_duration_seconds': round(search_duration, 3),
-            'max_results': max_results
-        },
-        'results': results_data
+            "results_count": len(results_data),
+            "search_duration_seconds": round(search_duration, 3),
+            "max_results": max_results
+        }
     })
-
 #####################################################################################
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -753,5 +754,6 @@ def image_based_search(request):
         },
         'results': serializer.data
     }, status=status.HTTP_200_OK)
+
 
 
