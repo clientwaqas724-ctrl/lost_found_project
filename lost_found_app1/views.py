@@ -441,19 +441,52 @@ def manual_image_search(request):
     FoundModel = FoundItem
     lost_qs, found_qs = LostModel.objects.none(), FoundModel.objects.none()
 
-    # ---------------------- Category normalization ----------------------
-    # "all" means search across all categories
+    # ---------------------- Category Handling ----------------------
     search_all_categories = any(cat in ['all', '*', 'everything'] for cat in category_terms)
     has_category_filters = bool(category_terms and not search_all_categories)
 
-    # ---------------------- Fallbacks and cases ----------------------
+    # Validate if category exists (strict check)
+    from items.models import Category  # adjust import to your actual app
+    valid_categories = list(Category.objects.values_list('name__iexact', flat=True))
+
+    # If category filters provided, ensure at least one valid category exists
+    if has_category_filters:
+        matched_categories = Category.objects.filter(name__iexact=category_terms[0])
+        if not matched_categories.exists():
+            # Category not found → return empty response immediately
+            ImageSearchLog.objects.create(
+                user=request.user,
+                search_type=search_type or 'auto',
+                search_query=search_query or 'N/A',
+                color_filters=color_filters,
+                category_filters=category_filters,
+                results_count=0,
+                search_duration=round(time.time() - start_time, 3)
+            )
+            return Response({
+                "count": 0,
+                "next": None,
+                "previous": None,
+                "results": [],
+                "search_metadata": {
+                    "query": search_query or "N/A",
+                    "type": search_type or "auto",
+                    "filters_applied": {
+                        "colors": color_filters or "N/A",
+                        "categories": category_filters or "N/A"
+                    },
+                    "results_count": 0,
+                    "search_duration_seconds": round(time.time() - start_time, 3),
+                    "max_results": max_results
+                }
+            })
+
+    # ---------------------- Base Logic ----------------------
     if not (search_query or search_type or category_filters or color_filters):
-        # No input → return all
         lost_qs, found_qs = LostModel.objects.all(), FoundModel.objects.all()
         search_type = 'all'
 
     elif search_all_categories:
-        # Category = all → return everything
         lost_qs, found_qs = LostModel.objects.all(), FoundModel.objects.all()
         search_type = 'all'
 
@@ -464,17 +497,12 @@ def manual_image_search(request):
         lost_qs, found_qs = LostModel.objects.all(), FoundModel.objects.all()
 
     elif has_category_filters and not (search_query or search_type):
-        # Direct category-only search
-        cat_q = Q()
-        for cat in category_terms:
-            cat_q |= Q(category__name__icontains=cat)
-
-        lost_qs = LostModel.objects.filter(cat_q)
-        found_qs = FoundModel.objects.filter(cat_q)
+        cat_name = category_terms[0]
+        lost_qs = LostModel.objects.filter(category__name__iexact=cat_name)
+        found_qs = FoundModel.objects.filter(category__name__iexact=cat_name)
         search_type = 'all'
 
     else:
-        # ---------------------- Dynamic queryset selection ----------------------
         if search_type == 'lost':
             base_qs = LostModel.objects.all()
         elif search_type == 'found':
@@ -484,12 +512,10 @@ def manual_image_search(request):
             lost_qs, found_qs = LostModel.objects.all(), FoundModel.objects.all()
             search_type = 'all'
 
-        # ---------------------- Core Filtering ----------------------
         def apply_filters(qs):
             if not qs.exists():
                 return qs.none()
 
-            # Text search
             if search_terms:
                 text_q = Q()
                 for term in search_terms:
@@ -507,19 +533,15 @@ def manual_image_search(request):
                     )
                 qs = qs.filter(text_q)
 
-            # Color filters
             if color_terms:
                 cq = Q()
                 for c in color_terms:
                     cq |= Q(color_tags__icontains=c) | Q(color__icontains=c)
                 qs = qs.filter(cq)
 
-            # Category filters
             if has_category_filters:
-                cat_q = Q()
-                for cat in category_terms:
-                    cat_q |= Q(category__name__icontains=cat)
-                qs = qs.filter(cat_q)
+                cat_name = category_terms[0]
+                qs = qs.filter(category__name__iexact=cat_name)  # strict match
 
             return qs
 
@@ -530,7 +552,6 @@ def manual_image_search(request):
             elif search_type == 'found':
                 found_qs = filtered_qs
         else:
-            # Type = all → filter both
             lost_qs, found_qs = apply_filters(LostModel.objects.all()), apply_filters(FoundModel.objects.all())
 
     # ---------------------- Combine Results ----------------------
@@ -545,7 +566,6 @@ def manual_image_search(request):
     results = combined_items[:max_results]
     search_duration = time.time() - start_time
 
-    # ---------------------- Log the Search ----------------------
     ImageSearchLog.objects.create(
         user=request.user,
         search_type=search_type or 'auto',
@@ -556,12 +576,10 @@ def manual_image_search(request):
         search_duration=search_duration
     )
 
-    # ---------------------- Serialize Results ----------------------
     lost_data = LostItemSerializer(
         [r for r in results if isinstance(r, LostModel)],
         many=True, context={'request': request}
     ).data
-
     found_data = FoundItemSerializer(
         [r for r in results if isinstance(r, FoundModel)],
         many=True, context={'request': request}
@@ -569,7 +587,6 @@ def manual_image_search(request):
 
     results_data = lost_data + found_data
 
-    # ---------------------- Response ----------------------
     return Response({
         "count": len(results_data),
         "next": None,
@@ -820,6 +837,7 @@ def image_based_search(request):
         },
         'results': serializer.data
     }, status=status.HTTP_200_OK)
+
 
 
 
