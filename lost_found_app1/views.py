@@ -284,6 +284,7 @@ class CategoryViewSet(viewsets.ModelViewSet):
         else:
             permission_classes = [IsAuthenticated, IsAdminOnly]  # only admins can modify
         return [permission() for permission in permission_classes]
+###################################################################################################################################################################################################
 #####################################################################################
 # LostItem ViewSet
 class LostItemViewSet(viewsets.ModelViewSet):
@@ -291,30 +292,38 @@ class LostItemViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        user = self.request.user
-        if user.user_type == 'admin':
-            return LostItem.objects.all()
-        return LostItem.objects.filter(user=user)
+        """
+        Allow all authenticated users (residents & admins) to view all Lost Items.
+        """
+        return LostItem.objects.all()
 
     def perform_create(self, serializer):
+        """
+        Automatically attach the current user as the creator when adding a lost item.
+        """
         serializer.save(user=self.request.user)
 
     @action(detail=False, methods=['get'])
     def my_lost_items(self, request):
+        """
+        View only the lost items created by the current user.
+        """
         items = LostItem.objects.filter(user=request.user)
         serializer = self.get_serializer(items, many=True)
         return Response(serializer.data)
 
     @action(detail=True, methods=['post'])
     def mark_found(self, request, pk=None):
+        """
+        Mark a lost item as found (allowed for item owner or admin).
+        """
         item = self.get_object()
         if item.user != request.user and request.user.user_type != 'admin':
             return Response({"detail": "Not authorized."}, status=status.HTTP_403_FORBIDDEN)
-        
         item.status = 'found'
         item.save()
         return Response({"detail": "Item marked as found."})
-
+#######################################################################################################################################################################################################
 #####################################################################################
 # FoundItem ViewSet
 class FoundItemViewSet(viewsets.ModelViewSet):
@@ -322,32 +331,38 @@ class FoundItemViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        user = self.request.user
-        if getattr(user, 'user_type', None) == 'admin':
-            return FoundItem.objects.all()
-        return FoundItem.objects.filter(user=user)
+        """
+        Allow all authenticated users (residents & admins) to view all Found Items.
+        """
+        return FoundItem.objects.all()
 
     def perform_create(self, serializer):
+        """
+        Automatically attach the current user as the creator when adding a found item.
+        """
         serializer.save(user=self.request.user)
 
     @action(detail=False, methods=['get'])
     def my_found_items(self, request):
+        """
+        View only the found items created by the current user.
+        """
         items = FoundItem.objects.filter(user=request.user)
         serializer = self.get_serializer(items, many=True)
         return Response(serializer.data)
 
     @action(detail=True, methods=['post'])
     def mark_returned(self, request, pk=None):
+        """
+        Mark a found item as returned (allowed for item owner or admin).
+        """
         item = self.get_object()
-        user = request.user
-        if item.user != user and getattr(user, 'user_type', None) != 'admin':
+        if item.user != request.user and getattr(request.user, 'user_type', None) != 'admin':
             return Response({"detail": "Not authorized."}, status=status.HTTP_403_FORBIDDEN)
         item.status = 'returned'
         item.save()
         return Response({"detail": "Item marked as returned."})
-
-
-#####################################################################################
+######################################################################################################################################################################################################
 # Claim ViewSet
 class ClaimViewSet(viewsets.ModelViewSet):
     serializer_class = ClaimSerializer
@@ -906,6 +921,7 @@ def image_based_search(request):
         },
         'results': serializer.data
     }, status=status.HTTP_200_OK)
+
 
 
 
