@@ -692,67 +692,81 @@ def manual_image_search(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def user_dashboard(request):
-    """User dashboard statistics and recent activities"""
+    """
+    User dashboard for residents.
+    Shows only the user's own Lost & Found items and related stats.
+    If a resident user has not added any Lost or Found items, those lists are not shown.
+    """
     user = request.user
 
-    # Basic stats for the logged-in user
+    # ✅ Only allow for resident users
+    if not hasattr(user, 'role') or user.role.lower() != 'resident':
+        return Response({"detail": "Access restricted. Only resident users can view this dashboard."},
+                        status=status.HTTP_403_FORBIDDEN)
+
+    # --- Base statistics ---
     stats = {
         'total_lost_items': LostItem.objects.filter(user=user).count(),
         'total_found_items': FoundItem.objects.filter(user=user).count(),
         'total_claims': Claim.objects.filter(user=user).count(),
         'pending_claims': Claim.objects.filter(user=user, status='pending').count(),
         'approved_claims': Claim.objects.filter(user=user, status='approved').count(),
-        # Remove total_users if not needed for user-level dashboard
-        # 'total_users': User.objects.count()  # <- Only include if serializer expects it
+        'unread_notifications': Notification.objects.filter(user=user, is_read=False).count(),
     }
 
-    # Recent activities
-    recent_lost = LostItem.objects.filter(user=user).order_by('-created_at')[:5]
-    recent_found = FoundItem.objects.filter(user=user).order_by('-created_at')[:5]
-    recent_claims = Claim.objects.filter(user=user).order_by('-created_at')[:5]
-
+    # --- Conditionally include Lost and Found lists ---
     recent_activities = []
 
-    for item in recent_lost:
-        recent_activities.append({
-            'type': 'lost_item',
-            'title': item.title,
-            'status': item.status,
-            'date': item.created_at,
-            'id': item.id
-        })
+    user_lost_items = LostItem.objects.filter(user=user).order_by('-created_at')
+    user_found_items = FoundItem.objects.filter(user=user).order_by('-created_at')
+    user_claims = Claim.objects.filter(user=user).order_by('-created_at')
 
-    for item in recent_found:
-        recent_activities.append({
-            'type': 'found_item',
-            'title': item.title,
-            'status': item.status,
-            'date': item.created_at,
-            'id': item.id
-        })
+    # ✅ Only include if user has Lost items
+    if user_lost_items.exists():
+        for item in user_lost_items[:5]:
+            recent_activities.append({
+                'type': 'lost_item',
+                'title': item.title,
+                'status': item.status,
+                'date': item.created_at,
+                'id': item.id
+            })
 
-    for claim in recent_claims:
-        recent_activities.append({
-            'type': 'claim',
-            'title': f"Claim for {claim.found_item.title}" if claim.found_item else "Claim",
-            'status': claim.status,
-            'date': claim.created_at,
-            'id': claim.id
-        })
+    # ✅ Only include if user has Found items
+    if user_found_items.exists():
+        for item in user_found_items[:5]:
+            recent_activities.append({
+                'type': 'found_item',
+                'title': item.title,
+                'status': item.status,
+                'date': item.created_at,
+                'id': item.id
+            })
 
-    # Sort activities by most recent
-    recent_activities.sort(key=lambda x: x['date'], reverse=True)
-    recent_activities = recent_activities[:10]
+    # ✅ Always include claims (if any)
+    if user_claims.exists():
+        for claim in user_claims[:5]:
+            recent_activities.append({
+                'type': 'claim',
+                'title': f"Claim for {claim.found_item.title}" if claim.found_item else "Claim",
+                'status': claim.status,
+                'date': claim.created_at,
+                'id': claim.id
+            })
 
-    stats['recent_activities'] = recent_activities
-    stats['unread_notifications'] = Notification.objects.filter(user=user, is_read=False).count()
+    # Sort activities (latest first)
+    if recent_activities:
+        recent_activities.sort(key=lambda x: x['date'], reverse=True)
+        stats['recent_activities'] = recent_activities[:10]
+    else:
+        stats['recent_activities'] = []
 
-    # ✅ Safe serializer call (for dict data, use `data=` instead of `instance=`)
+    # --- Serializer output ---
     serializer = DashboardStatsSerializer(data=stats)
     serializer.is_valid(raise_exception=False)
 
     return Response(serializer.data)
-#####################################################################################
+###########################################################################################################################################################################################################
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, IsAdminOnly])
 def admin_dashboard(request):
@@ -921,6 +935,7 @@ def image_based_search(request):
         },
         'results': serializer.data
     }, status=status.HTTP_200_OK)
+
 
 
 
