@@ -421,10 +421,11 @@ def manual_image_search(request):
     """
     AI-like Smart Image Search API
     --------------------------------
-    Enhanced version with:
-      ✅ Robust fallback handling for query/type/filters
-      ✅ Strict category validation (no wrong-category leakage)
-      ✅ Category details returned in metadata
+    Fully robust version with:
+      ✅ Strict category validation
+      ✅ Block unrelated category data
+      ✅ Category-level existence check for Lost/Found
+      ✅ Clean metadata + helpful message
     """
     import re, time
     from django.db.models import Q
@@ -450,16 +451,19 @@ def manual_image_search(request):
     CategoryModel = Category
 
     lost_qs, found_qs = LostModel.objects.none(), FoundModel.objects.none()
-    matched_category = None  # for metadata response
+    matched_category = None
+    message = None
 
-    # ---------------------- Category Validation ----------------------
+    # ---------------------- CATEGORY VALIDATION ----------------------
     if category_filters and category_filters.lower() != 'all':
         matched_category = CategoryModel.objects.filter(name__iexact=category_filters).first()
+
+        # Category does not exist at all
         if not matched_category:
-            # No valid category → no results
             return Response({
                 "count": 0,
                 "results": [],
+                "message": f"This category '{category_filters}' does not exist.",
                 "search_metadata": {
                     "query": search_query or "N/A",
                     "type": search_type or "auto",
@@ -474,7 +478,73 @@ def manual_image_search(request):
                 }
             })
 
-    # ---------------------- Case Handling ----------------------
+        # Category exists, now check if any item exists under it
+        has_lost = LostModel.objects.filter(category=matched_category).exists()
+        has_found = FoundModel.objects.filter(category=matched_category).exists()
+
+        # If no item exists for selected search_type, block results
+        if search_type == 'lost' and not has_lost:
+            return Response({
+                "count": 0,
+                "results": [],
+                "message": f"No Lost items found under category '{matched_category.name}'.",
+                "category_details": CategorySerializer(matched_category).data,
+                "search_metadata": {
+                    "query": search_query or "N/A",
+                    "type": "lost",
+                    "filters_applied": {
+                        "colors": color_filters or "N/A",
+                        "categories": matched_category.name
+                    },
+                    "category_exists": True,
+                    "results_count": 0,
+                    "search_duration_seconds": round(time.time() - start_time, 3),
+                    "max_results": max_results
+                }
+            })
+
+        if search_type == 'found' and not has_found:
+            return Response({
+                "count": 0,
+                "results": [],
+                "message": f"No Found items found under category '{matched_category.name}'.",
+                "category_details": CategorySerializer(matched_category).data,
+                "search_metadata": {
+                    "query": search_query or "N/A",
+                    "type": "found",
+                    "filters_applied": {
+                        "colors": color_filters or "N/A",
+                        "categories": matched_category.name
+                    },
+                    "category_exists": True,
+                    "results_count": 0,
+                    "search_duration_seconds": round(time.time() - start_time, 3),
+                    "max_results": max_results
+                }
+            })
+
+        # If type=all and no data exists at all
+        if search_type == 'all' and not (has_lost or has_found):
+            return Response({
+                "count": 0,
+                "results": [],
+                "message": f"No Lost or Found items exist under category '{matched_category.name}'.",
+                "category_details": CategorySerializer(matched_category).data,
+                "search_metadata": {
+                    "query": search_query or "N/A",
+                    "type": "all",
+                    "filters_applied": {
+                        "colors": color_filters or "N/A",
+                        "categories": matched_category.name
+                    },
+                    "category_exists": True,
+                    "results_count": 0,
+                    "search_duration_seconds": round(time.time() - start_time, 3),
+                    "max_results": max_results
+                }
+            })
+
+    # ---------------------- FLEXIBLE SEARCH LOGIC ----------------------
     if not (search_query or search_type or category_filters or color_filters):
         lost_qs, found_qs = LostModel.objects.all(), FoundModel.objects.all()
 
@@ -492,7 +562,6 @@ def manual_image_search(request):
         lost_qs, found_qs = LostModel.objects.all(), FoundModel.objects.all()
 
     else:
-        # Base queryset
         if search_type == 'lost':
             base_qs = LostModel.objects.all()
         elif search_type == 'found':
@@ -505,7 +574,7 @@ def manual_image_search(request):
         if base_qs is not None:
             queryset = base_qs
 
-            # ---------------------- Text Search ----------------------
+            # Text Search
             if search_terms:
                 text_q = Q()
                 for term in search_terms:
@@ -523,14 +592,14 @@ def manual_image_search(request):
                     )
                 queryset = queryset.filter(text_q)
 
-            # ---------------------- Color Filters ----------------------
+            # Color Filters
             if color_terms:
                 cq = Q()
                 for c in color_terms:
                     cq |= Q(color_tags__icontains=c) | Q(color__icontains=c)
                 queryset = queryset.filter(cq)
 
-            # ---------------------- Category Filters ----------------------
+            # Category Filter (strict)
             if matched_category:
                 queryset = queryset.filter(category=matched_category)
             elif category_terms:
@@ -539,7 +608,6 @@ def manual_image_search(request):
                     cat_q |= Q(category__name__iexact=cat)
                 queryset = queryset.filter(cat_q)
 
-            # Assign result sets
             if search_type == 'lost':
                 lost_qs = queryset
             elif search_type == 'found':
@@ -558,7 +626,7 @@ def manual_image_search(request):
     results = combined_items[:max_results]
     search_duration = time.time() - start_time
 
-    # ---------------------- Logging ----------------------
+    # ---------------------- Log Search ----------------------
     ImageSearchLog.objects.create(
         user=request.user,
         search_type=search_type or 'auto',
@@ -569,7 +637,7 @@ def manual_image_search(request):
         search_duration=search_duration
     )
 
-    # ---------------------- Serialization ----------------------
+    # ---------------------- Serialize Results ----------------------
     lost_data = LostItemSerializer(
         [r for r in results if isinstance(r, LostModel)],
         many=True, context={'request': request}
@@ -582,10 +650,7 @@ def manual_image_search(request):
 
     results_data = lost_data + found_data
 
-    # ---------------------- Category Details ----------------------
-    category_data = None
-    if matched_category:
-        category_data = CategorySerializer(matched_category).data
+    category_data = CategorySerializer(matched_category).data if matched_category else None
 
     # ---------------------- Final Response ----------------------
     return Response({
@@ -593,6 +658,7 @@ def manual_image_search(request):
         "next": None,
         "previous": None,
         "results": results_data,
+        "message": message or "Results found successfully.",
         "search_metadata": {
             "query": search_query or "N/A",
             "type": search_type or "auto",
@@ -840,6 +906,7 @@ def image_based_search(request):
         },
         'results': serializer.data
     }, status=status.HTTP_200_OK)
+
 
 
 
