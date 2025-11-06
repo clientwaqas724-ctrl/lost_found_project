@@ -319,9 +319,10 @@ class CategorySerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'description', 'created_at']
         read_only_fields = ['id', 'created_at']
 
-#################################################################################################################################################
+#########################################################################################################################################################################################################
 class LostItemSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
+    user_id = serializers.IntegerField(source='user.id', read_only=True)  # ✅ Added user ID
     category_name = serializers.CharField(source='category.name', read_only=True)
     search_tags_list = serializers.SerializerMethodField()
     color_tags_list = serializers.SerializerMethodField()
@@ -331,13 +332,13 @@ class LostItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = LostItem
         fields = [
-            'id', 'user', 'title', 'description', 'category', 'category_name',
+            'id', 'user', 'user_id', 'title', 'description', 'category', 'category_name',
             'search_tags', 'color_tags', 'material_tags', 'lost_location',
             'lost_date', 'lost_time', 'brand', 'color', 'size', 'item_image',
             'status', 'is_verified', 'created_at', 'updated_at',
             'search_tags_list', 'color_tags_list', 'material_tags_list'
         ]
-        read_only_fields = ['id', 'user', 'created_at', 'updated_at', 'is_verified']
+        read_only_fields = ['id', 'user', 'user_id', 'created_at', 'updated_at', 'is_verified']
 
     def get_search_tags_list(self, obj):
         return obj.get_search_tags_list()
@@ -351,7 +352,6 @@ class LostItemSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         request = self.context.get('request')
         user = request.user
-
         image_data = validated_data.pop('item_image', None)
         instance = LostItem(**validated_data)
         instance.user = user
@@ -364,13 +364,13 @@ class LostItemSerializer(serializers.ModelSerializer):
                 instance.item_image.save(image_name, ContentFile(image_content), save=False)
             except Exception as e:
                 raise serializers.ValidationError({"item_image": f"Invalid image URL or download failed: {e}"})
-        
-        # ✅ If file is uploaded normally (multipart/form-data), DRF handles automatically
+
         instance.save()
         return instance
-#################################################################################################################################################
+#########################################################################################################################################################################################################
 class FoundItemSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
+    user_id = serializers.IntegerField(source='user.id', read_only=True)  # ✅ Added user ID
     category_name = serializers.CharField(source='category.name', read_only=True)
     search_tags_list = serializers.SerializerMethodField()
     color_tags_list = serializers.SerializerMethodField()
@@ -382,14 +382,14 @@ class FoundItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = FoundItem
         fields = [
-            'id', 'user', 'title', 'description', 'category', 'category_name',
+            'id', 'user', 'user_id', 'title', 'description', 'category', 'category_name',
             'search_tags', 'color_tags', 'material_tags', 'found_location',
             'found_date', 'found_time', 'brand', 'color', 'size',
             'item_image', 'image_url', 'storage_location', 'status',
             'is_verified', 'created_at', 'updated_at',
             'search_tags_list', 'color_tags_list', 'material_tags_list'
         ]
-        read_only_fields = ['id', 'user', 'created_at', 'updated_at', 'is_verified']
+        read_only_fields = ['id', 'user', 'user_id', 'created_at', 'updated_at', 'is_verified']
 
     def get_search_tags_list(self, obj):
         return obj.get_search_tags_list()
@@ -403,7 +403,7 @@ class FoundItemSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         validated_data['user'] = self.context['request'].user
         return super().create(validated_data)
-#################################################################################################################################################
+############################################################################################################################################################################################################
 class ClaimSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
     user_email = serializers.EmailField(source='user.email', read_only=True)
@@ -506,6 +506,7 @@ class ImageFeatureSerializer(serializers.ModelSerializer):
     class Meta:
         model = ImageFeature
         fields = ['id', 'item_type', 'item_id', 'created_at']
+
 
 
 
