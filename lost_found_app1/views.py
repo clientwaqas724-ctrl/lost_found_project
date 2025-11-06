@@ -414,6 +414,7 @@ class NotificationViewSet(viewsets.ModelViewSet):
 
 
 ##################################################################################################################################################################################################
+##################################################################################################################################################################################################
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def manual_image_search(request):
@@ -438,14 +439,21 @@ def manual_image_search(request):
 
     LostModel = LostItem
     FoundModel = FoundItem
-
     lost_qs, found_qs = LostModel.objects.none(), FoundModel.objects.none()
 
-    # ---------------------- Case Handling ----------------------
-    if not (search_query or search_type or category_filters or color_filters):
-        lost_qs, found_qs = LostModel.objects.all(), FoundModel.objects.all()
+    # ---------------------- Category normalization ----------------------
+    # "all" means search across all categories
+    search_all_categories = any(cat in ['all', '*', 'everything'] for cat in category_terms)
+    has_category_filters = bool(category_terms and not search_all_categories)
 
-    elif category_filters.lower() == 'all':
+    # ---------------------- Fallbacks and cases ----------------------
+    if not (search_query or search_type or category_filters or color_filters):
+        # No input → return all
+        lost_qs, found_qs = LostModel.objects.all(), FoundModel.objects.all()
+        search_type = 'all'
+
+    elif search_all_categories:
+        # Category = all → return everything
         lost_qs, found_qs = LostModel.objects.all(), FoundModel.objects.all()
         search_type = 'all'
 
@@ -455,22 +463,31 @@ def manual_image_search(request):
     elif color_filters and not (search_query or category_filters or search_type):
         lost_qs, found_qs = LostModel.objects.all(), FoundModel.objects.all()
 
-    elif category_filters and not (search_query or search_type):
-        lost_qs, found_qs = LostModel.objects.all(), FoundModel.objects.all()
+    elif has_category_filters and not (search_query or search_type):
+        # Direct category-only search
+        cat_q = Q()
+        for cat in category_terms:
+            cat_q |= Q(category__name__icontains=cat)
+
+        lost_qs = LostModel.objects.filter(cat_q)
+        found_qs = FoundModel.objects.filter(cat_q)
+        search_type = 'all'
 
     else:
-        # Base queryset
+        # ---------------------- Dynamic queryset selection ----------------------
         if search_type == 'lost':
             base_qs = LostModel.objects.all()
         elif search_type == 'found':
             base_qs = FoundModel.objects.all()
         else:
+            base_qs = None
             lost_qs, found_qs = LostModel.objects.all(), FoundModel.objects.all()
             search_type = 'all'
-            base_qs = None
 
-        if base_qs is not None:
-            queryset = base_qs
+        # ---------------------- Core Filtering ----------------------
+        def apply_filters(qs):
+            if not qs.exists():
+                return qs.none()
 
             # Text search
             if search_terms:
@@ -488,32 +505,37 @@ def manual_image_search(request):
                         | Q(category__name__icontains=term)
                         | Q(lost_location__icontains=term)
                     )
-                queryset = queryset.filter(text_q)
+                qs = qs.filter(text_q)
 
             # Color filters
             if color_terms:
                 cq = Q()
                 for c in color_terms:
                     cq |= Q(color_tags__icontains=c) | Q(color__icontains=c)
-                queryset = queryset.filter(cq)
+                qs = qs.filter(cq)
 
             # Category filters
-            if category_terms:
+            if has_category_filters:
                 cat_q = Q()
                 for cat in category_terms:
                     cat_q |= Q(category__name__icontains=cat)
-                queryset = queryset.filter(cat_q)
+                qs = qs.filter(cat_q)
 
+            return qs
+
+        if base_qs is not None:
+            filtered_qs = apply_filters(base_qs)
             if search_type == 'lost':
-                lost_qs = queryset
+                lost_qs = filtered_qs
             elif search_type == 'found':
-                found_qs = queryset
+                found_qs = filtered_qs
+        else:
+            # Type = all → filter both
+            lost_qs, found_qs = apply_filters(LostModel.objects.all()), apply_filters(FoundModel.objects.all())
 
-    # ---------------------- Combine Results (Safe Way) ----------------------
-    # Instead of union filtering, handle them separately then combine in Python
+    # ---------------------- Combine Results ----------------------
     lost_items = list(lost_qs[:max_results])
     found_items = list(found_qs[:max_results])
-
     combined_items = sorted(
         list(lost_items) + list(found_items),
         key=lambda x: getattr(x, "created_at", None) or 0,
@@ -523,7 +545,7 @@ def manual_image_search(request):
     results = combined_items[:max_results]
     search_duration = time.time() - start_time
 
-    # Log Search
+    # ---------------------- Log the Search ----------------------
     ImageSearchLog.objects.create(
         user=request.user,
         search_type=search_type or 'auto',
@@ -534,7 +556,7 @@ def manual_image_search(request):
         search_duration=search_duration
     )
 
-    # Serialize results safely
+    # ---------------------- Serialize Results ----------------------
     lost_data = LostItemSerializer(
         [r for r in results if isinstance(r, LostModel)],
         many=True, context={'request': request}
@@ -547,6 +569,7 @@ def manual_image_search(request):
 
     results_data = lost_data + found_data
 
+    # ---------------------- Response ----------------------
     return Response({
         "count": len(results_data),
         "next": None,
@@ -797,6 +820,7 @@ def image_based_search(request):
         },
         'results': serializer.data
     }, status=status.HTTP_200_OK)
+
 
 
 
