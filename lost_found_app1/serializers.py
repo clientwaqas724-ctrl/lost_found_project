@@ -320,18 +320,15 @@ class CategorySerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at']
 
 #########################################################################################################################################################################################################
+# serializers.py
 class LostItemSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
     user_id = serializers.IntegerField(source='user.id', read_only=True)
     category_name = serializers.CharField(source='category.name', read_only=True)
     item_image = serializers.ImageField(required=False, allow_null=True)
     
-    # ✅ BEST APPROACH: SlugRelatedField for category name input
-    category = serializers.SlugRelatedField(
-        queryset=Category.objects.all(),
-        slug_field='name',
-        required=True
-    )
+    # ✅ FLEXIBLE: Accept both category ID or name
+    category = serializers.CharField(required=True)
 
     search_tags_list = serializers.SerializerMethodField()
     color_tags_list = serializers.SerializerMethodField()
@@ -357,12 +354,33 @@ class LostItemSerializer(serializers.ModelSerializer):
     def get_material_tags_list(self, obj):
         return obj.get_material_tags_list()
 
+    def validate_category(self, value):
+        """Convert category name or ID to Category object"""
+        try:
+            # Try to find by ID first
+            if value.isdigit():
+                category = Category.objects.get(id=int(value))
+            else:
+                # Try to find by name
+                category = Category.objects.get(name=value)
+            return category
+        except Category.DoesNotExist:
+            raise serializers.ValidationError(f"Category '{value}' does not exist.")
+        except (ValueError, AttributeError):
+            raise serializers.ValidationError("Invalid category format. Use category ID or name.")
+
+    def to_representation(self, instance):
+        """Convert category object to name in response"""
+        representation = super().to_representation(instance)
+        representation['category'] = instance.category.name if instance.category else None
+        return representation
+
     def create(self, validated_data):
         request = self.context.get('request')
         user = request.user
         image_data = validated_data.pop('item_image', None)
         
-        # Category is automatically handled by SlugRelatedField
+        # Category is already converted to object in validate_category
         instance = LostItem(**validated_data)
         instance.user = user
 
@@ -518,6 +536,7 @@ class ImageFeatureSerializer(serializers.ModelSerializer):
     class Meta:
         model = ImageFeature
         fields = ['id', 'item_type', 'item_id', 'created_at']
+
 
 
 
