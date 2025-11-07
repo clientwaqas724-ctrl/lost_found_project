@@ -87,10 +87,8 @@ class Category(models.Model):
     name = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    
     def __str__(self):
         return self.name
-
 ######################################################################################################################################################################################################
 ######################################################################################################################################################################################################
 class LostItem(models.Model):
@@ -139,16 +137,20 @@ class LostItem(models.Model):
         return f"{self.title} - {self.get_status_display()}"
 
     def save(self, *args, **kwargs):
+        # Only generate search_tags if they're empty and we have title
         if not self.search_tags and self.title:
-            base_tags = [self.title.lower()]
+            base_tags = [self.title.lower().strip()]
             if self.brand:
-                base_tags.append(self.brand.lower())
+                base_tags.append(self.brand.lower().strip())
             if self.color:
-                base_tags.append(self.color.lower())
-                self.color_tags = self.color
+                base_tags.append(self.color.lower().strip())
+                if not self.color_tags:
+                    self.color_tags = self.color
             if self.category:
-                base_tags.append(self.category.name.lower())
-            self.search_tags = ", ".join(base_tags)
+                base_tags.append(self.category.name.lower().strip())
+            self.search_tags = ", ".join([tag for tag in base_tags if tag])
+        
+        # Call parent save
         super().save(*args, **kwargs)
     
     def get_search_tags_list(self):
@@ -391,6 +393,7 @@ def create_found_item_embedding(sender, instance, **kwargs):
                 item_id=instance.id,
                 defaults={'embedding': emb}
             )
+
 
 
 
