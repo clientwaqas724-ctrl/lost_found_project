@@ -307,9 +307,6 @@ class CategoryViewSet(viewsets.ModelViewSet):
         return [permission() for permission in permission_classes]
 ###################################################################################################################################################################################################
 ##############################################################################################################################################################################################
-# ===========================================
-# LOST ITEM VIEWSET
-# ===========================================
 class LostItemViewSet(viewsets.ModelViewSet):
     """
     Lost item management.
@@ -321,28 +318,13 @@ class LostItemViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        """
-        Filter queryset by user type:
-        - Admin → all lost items
-        - Resident → only their own items
-        """
         user = self.request.user
         base_qs = LostItem.objects.select_related('user', 'category').order_by('-created_at')
         if user.user_type == 'admin':
             return base_qs
         return base_qs.filter(user=user)
 
-    def perform_create(self, serializer):
-        """
-        Safely attach the current user to the lost item.
-        Prevents duplicate keyword argument 'user' errors.
-        """
-        serializer.save(user=self.request.user)
-
     def create(self, request, *args, **kwargs):
-        """
-        Custom create method with enhanced error handling and clean response.
-        """
         try:
             logger.info("=== START LOST ITEM CREATION ===")
             logger.info(f"User: {request.user.username} (ID: {request.user.id})")
@@ -357,17 +339,27 @@ class LostItemViewSet(viewsets.ModelViewSet):
                 )
 
             serializer = self.get_serializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
+            if not serializer.is_valid():
+                logger.warning(f"Validation errors: {serializer.errors}")
+                return Response(
+                    {
+                        "success": False,
+                        "message": "Please fix the validation errors.",
+                        "errors": serializer.errors,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
-            # ✅ Use DRF hook to handle 'user' cleanly
-            self.perform_create(serializer)
+            # ✅ Save item with the current user (no duplicate user issue now)
+            lost_item = serializer.save(user=request.user)
+            response_serializer = self.get_serializer(lost_item)
 
             logger.info("=== END LOST ITEM CREATION SUCCESS ===")
             return Response(
                 {
                     "success": True,
                     "message": "Lost item added successfully!",
-                    "data": serializer.data,
+                    "data": response_serializer.data,
                 },
                 status=status.HTTP_201_CREATED,
             )
@@ -385,9 +377,7 @@ class LostItemViewSet(viewsets.ModelViewSet):
             )
 
     def list(self, request, *args, **kwargs):
-        """
-        Consistent, clean list response for admin and residents.
-        """
+        """Consistent, clean list response for admin and residents"""
         try:
             queryset = self.filter_queryset(self.get_queryset())
             logger.info(f"Listing lost items for user: {request.user.username}")
@@ -424,10 +414,7 @@ class LostItemViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def my_lost_items(self, request):
-        """
-        Resident: show only their own lost items.
-        Admin: show all.
-        """
+        """Resident: show only their own lost items. Admin: show all."""
         try:
             user = request.user
             logger.info(f"My lost items requested by: {user.username}")
@@ -1242,6 +1229,7 @@ def regenerate_image_features(request, item_type, item_id):
             {"error": "Failed to generate image features"}, 
             status=status.HTTP_400_BAD_REQUEST
         )
+
 
 
 
