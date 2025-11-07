@@ -10,14 +10,16 @@ import uuid
 from datetime import date
 from django.utils.html import format_html
 ##########################################################################################################################################################################################################
-import numpy as np
+# import numpy as np
 from io import BytesIO
 from PIL import Image
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2, preprocess_input
-from tensorflow.keras.preprocessing import image as keras_image
-from tensorflow.keras.models import Model
+import os
+import hashlib
+# from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2, preprocess_input
+# from tensorflow.keras.preprocessing import image as keras_image
+# from tensorflow.keras.models import Model
 ###############################################################################################################################################################################################################
 class User(AbstractUser):
     USER_TYPE_CHOICES = (
@@ -334,66 +336,168 @@ class ImageSearchLog(models.Model):
 
         return f"Image Search - {self.search_type} - {self.created_at.strftime('%Y-%m-%d %H:%M')}"
 #######################################################################################################################################################
-# Preload MobileNetV2 model once (lightweight feature extractor)
-mobilenet_model = MobileNetV2(weights='imagenet', include_top=False, pooling='avg')
-
 class ImageFeature(models.Model):
     """
-    Stores precomputed embeddings (feature vectors) for each item image
-    to enable image-based search.
+    Stores image fingerprints for similarity search using custom algorithm
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     item_type = models.CharField(max_length=10, choices=(('lost', 'Lost'), ('found', 'Found')))
     item_id = models.UUIDField()
-    embedding = models.BinaryField()  # Serialized NumPy vector
+    
+    # Image metadata for similarity matching
+    dominant_colors = models.CharField(max_length=500, blank=True)  # RGB values as string
+    color_palette = models.TextField(blank=True)  # Extended color information
+    image_size = models.CharField(max_length=50, blank=True)  # Width x Height
+    file_size = models.IntegerField(default=0)  # File size in bytes
+    aspect_ratio = models.FloatField(default=0.0)
+    image_hash = models.CharField(max_length=64, blank=True)  # Perceptual hash
+    
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['item_type', 'item_id']),
+            models.Index(fields=['dominant_colors']),
+        ]
+
     def __str__(self):
-        return f"{self.item_type.title()} Item Feature ({self.item_id})"
+        return f"{self.item_type.title()} Item Features ({self.item_id})"
 
-
-def generate_image_embedding(img_file):
+def generate_image_fingerprint(img_file):
     """
-    Generates a normalized feature vector (embedding) from an image using MobileNetV2.
+    Generates a fingerprint for image similarity search using custom algorithm
     """
     try:
-        img = Image.open(img_file).convert("RGB")
-        img = img.resize((224, 224))
-        x = keras_image.img_to_array(img)
-        x = np.expand_dims(x, axis=0)
-        x = preprocess_input(x)
-        features = mobilenet_model.predict(x)[0]
-        features = features / np.linalg.norm(features)  # Normalize vector
-        return features.tobytes()
+        img = Image.open(img_file)
+        img = img.convert("RGB")
+        
+        # Basic image properties
+        width, height = img.size
+        file_size = img_file.size
+        aspect_ratio = width / height if height > 0 else 0
+        
+        # Generate simple dominant colors (average of quarters)
+        img_small = img.resize((4, 4))  # Resize to 4x4 for color analysis
+        pixels = list(img_small.getdata())
+        
+        # Calculate average RGB for the entire image and quarters
+        avg_r = sum(p[0] for p in pixels) // len(pixels)
+        avg_g = sum(p[1] for p in pixels) // len(pixels)
+        avg_b = sum(p[2] for p in pixels) // len(pixels)
+        
+        dominant_colors = f"{avg_r},{avg_g},{avg_b}"
+        
+        # Generate simple perceptual hash
+        img_gray = img.convert("L").resize((8, 8))  # 8x8 grayscale
+        pixels = list(img_gray.getdata())
+        avg = sum(pixels) // len(pixels)
+        hash_str = ''.join('1' if pixel > avg else '0' for pixel in pixels)
+        image_hash = hashlib.md5(hash_str.encode()).hexdigest()
+        
+        # Extended color palette (top 5 colors)
+        color_counts = {}
+        for pixel in pixels[:100]:  # Sample first 100 pixels for efficiency
+            color_counts[pixel] = color_counts.get(pixel, 0) + 1
+        
+        top_colors = sorted(color_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+        color_palette = ";".join([f"{color[0]}:{color[1]}" for color in top_colors])
+        
+        return {
+            'dominant_colors': dominant_colors,
+            'color_palette': color_palette,
+            'image_size': f"{width}x{height}",
+            'file_size': file_size,
+            'aspect_ratio': aspect_ratio,
+            'image_hash': image_hash
+        }
+        
     except Exception as e:
-        print("Embedding generation error:", e)
+        print(f"Image fingerprint generation error: {e}")
         return None
 
+def find_similar_images(search_image, item_type='both', max_results=10):
+    """
+    Custom algorithm to find similar images based on image fingerprints
+    """
+    search_fingerprint = generate_image_fingerprint(search_image)
+    if not search_fingerprint:
+        return []
+    
+    results = []
+    search_colors = [int(x) for x in search_fingerprint['dominant_colors'].split(',')]
+    search_aspect = search_fingerprint['aspect_ratio']
+    
+    # Determine which item types to search
+    if item_type == 'both':
+        features = ImageFeature.objects.all()
+    else:
+        features = ImageFeature.objects.filter(item_type=item_type)
+    
+    for feature in features:
+        score = 0
+        
+        # Color similarity (40% weight)
+        try:
+            feature_colors = [int(x) for x in feature.dominant_colors.split(',')]
+            color_diff = sum(abs(sc - fc) for sc, fc in zip(search_colors, feature_colors))
+            color_score = max(0, 100 - (color_diff / 3))  # Normalize to 0-100
+            score += color_score * 0.4
+        except:
+            pass
+        
+        # Aspect ratio similarity (30% weight)
+        aspect_diff = abs(search_aspect - feature.aspect_ratio)
+        aspect_score = max(0, 100 - (aspect_diff * 100))
+        score += aspect_score * 0.3
+        
+        # Size similarity (20% weight)
+        try:
+            search_w, search_h = map(int, search_fingerprint['image_size'].split('x'))
+            feature_w, feature_h = map(int, feature.image_size.split('x'))
+            size_diff = abs(search_w - feature_w) + abs(search_h - feature_h)
+            size_score = max(0, 100 - (size_diff / 100))  # Normalize
+            score += size_score * 0.2
+        except:
+            pass
+        
+        # Hash similarity (10% weight) - basic hamming distance
+        hash_similarity = sum(c1 == c2 for c1, c2 in zip(
+            search_fingerprint['image_hash'], 
+            feature.image_hash
+        )) / len(search_fingerprint['image_hash']) * 100
+        score += hash_similarity * 0.1
+        
+        if score > 30:  # Minimum similarity threshold
+            results.append({
+                'item_type': feature.item_type,
+                'item_id': feature.item_id,
+                'similarity_score': round(score, 2),
+                'feature': feature
+            })
+    
+    # Sort by similarity score and return top results
+    results.sort(key=lambda x: x['similarity_score'], reverse=True)
+    return results[:max_results]
 
-# === Auto-generate embeddings when LostItem or FoundItem is saved ===
-
-@receiver(post_save, sender='lost_found_app1.LostItem')  # replace 'yourapp' with actual app name
-def create_lost_item_embedding(sender, instance, **kwargs):
+# Signals to generate image fingerprints
+@receiver(post_save, sender=LostItem)
+def create_lost_item_fingerprint(sender, instance, **kwargs):
     if instance.item_image:
-        emb = generate_image_embedding(instance.item_image)
-        if emb:
+        fingerprint = generate_image_fingerprint(instance.item_image)
+        if fingerprint:
             ImageFeature.objects.update_or_create(
                 item_type='lost',
                 item_id=instance.id,
-                defaults={'embedding': emb}
+                defaults=fingerprint
             )
 
-@receiver(post_save, sender='lost_found_app1.FoundItem')
-def create_found_item_embedding(sender, instance, **kwargs):
+@receiver(post_save, sender=FoundItem)
+def create_found_item_fingerprint(sender, instance, **kwargs):
     if instance.item_image:
-        emb = generate_image_embedding(instance.item_image)
-        if emb:
+        fingerprint = generate_image_fingerprint(instance.item_image)
+        if fingerprint:
             ImageFeature.objects.update_or_create(
                 item_type='found',
                 item_id=instance.id,
-                defaults={'embedding': emb}
+                defaults=fingerprint
             )
-
-
-
-
