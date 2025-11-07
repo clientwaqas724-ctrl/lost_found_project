@@ -505,43 +505,255 @@ class LostItemViewSet(viewsets.ModelViewSet):
             )
 #######################################################################################################################################################################################################
 ###################################################################################################################################################################################################
-# FoundItem ViewSet
 class FoundItemViewSet(viewsets.ModelViewSet):
+    """
+    Found item management.
+    - Admin can view all items.
+    - Resident sees only their own.
+    - Returns success message on create.
+    """
     serializer_class = FoundItemSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        """
-        Allow all authenticated users (residents & admins) to view all Found Items.
-        """
-        return FoundItem.objects.all()
+        user = self.request.user
+        base_qs = FoundItem.objects.select_related('user', 'category').order_by('-created_at')
 
-    def perform_create(self, serializer):
+        if user.user_type == 'admin':
+            return base_qs
+        else:
+            return base_qs.filter(user=user)
+
+    def create(self, request, *args, **kwargs):
+        try:
+            logger.info(f"=== START FOUND ITEM CREATION ===")
+            logger.info(f"User: {request.user.username} (ID: {request.user.id})")
+            logger.info(f"User type: {request.user.user_type}")
+            logger.info(f"Request method: {request.method}")
+            logger.info(f"Content type: {request.content_type}")
+            logger.info(f"Request data: {request.data}")
+            logger.info(f"Request FILES: {request.FILES}")
+            
+            # Check if user is authenticated
+            if not request.user.is_authenticated:
+                return Response(
+                    {
+                        "success": False,
+                        "message": "User not authenticated."
+                    },
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+            
+            serializer = self.get_serializer(data=request.data)
+            
+            # Log serializer initialization
+            logger.info("Serializer initialized")
+            
+            # Validate data
+            if not serializer.is_valid():
+                logger.warning(f"Validation errors: {serializer.errors}")
+                return Response(
+                    {
+                        "success": False,
+                        "message": "Please fix the validation errors below.",
+                        "errors": serializer.errors
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            logger.info("Serializer validation passed")
+            
+            # Save the found item
+            found_item = serializer.save()
+            
+            logger.info(f"Found item saved successfully with ID: {found_item.id}")
+            
+            # Serialize the created instance for response
+            response_serializer = self.get_serializer(found_item)
+            
+            logger.info(f"=== END FOUND ITEM CREATION - SUCCESS ===")
+            
+            return Response(
+                {
+                    "success": True,
+                    "message": "Found item added successfully!",
+                    "data": response_serializer.data
+                },
+                status=status.HTTP_201_CREATED
+            )
+            
+        except Exception as e:
+            logger.error(f"=== FOUND ITEM CREATION FAILED ===")
+            logger.error(f"Error: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"=== END ERROR ===")
+            
+            # Provide specific error messages based on error type
+            error_message = "Something went wrong while adding the found item."
+            
+            if "validation" in str(e).lower():
+                error_message = "Validation error. Please check your input."
+            elif "category" in str(e).lower():
+                error_message = "Category error. Please select a valid category."
+            elif "image" in str(e).lower():
+                error_message = "Image upload error. Please try a different image."
+            
+            return Response(
+                {
+                    "success": False,
+                    "message": error_message,
+                    "error": str(e)
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    def list(self, request, *args, **kwargs):
         """
-        Automatically attach the current user as the creator when adding a found item.
+        Override list to provide consistent response format
         """
-        serializer.save(user=self.request.user)
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
+            
+            # Log query information
+            logger.info(f"Listing found items for user: {request.user.username}")
+            logger.info(f"Total items found: {queryset.count()}")
+            
+            # Check if queryset is empty
+            if not queryset.exists():
+                return Response(
+                    {
+                        "success": True,
+                        "message": "No found items found.",
+                        "data": []
+                    },
+                    status=status.HTTP_200_OK
+                )
+            
+            page = self.paginate_queryset(queryset)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response({
+                    "success": True,
+                    "message": "Found items retrieved successfully.",
+                    "data": serializer.data
+                })
+
+            serializer = self.get_serializer(queryset, many=True)
+            return Response(
+                {
+                    "success": True,
+                    "message": "Found items retrieved successfully.",
+                    "data": serializer.data
+                },
+                status=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            logger.error(f"Error retrieving found items: {str(e)}")
+            logger.error(traceback.format_exc())
+            
+            return Response(
+                {
+                    "success": False,
+                    "message": "Failed to load found items.",
+                    "error": str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     @action(detail=False, methods=['get'])
     def my_found_items(self, request):
         """
-        View only the found items created by the current user.
+        Resident: show only own found items.
+        Admin: show all.
         """
-        items = FoundItem.objects.filter(user=request.user)
-        serializer = self.get_serializer(items, many=True)
-        return Response(serializer.data)
+        try:
+            user = request.user
+            logger.info(f"My found items requested by: {user.username}")
+            
+            if user.user_type == 'admin':
+                items = FoundItem.objects.all().order_by('-created_at')
+                logger.info(f"Admin view - total items: {items.count()}")
+            else:
+                items = FoundItem.objects.filter(user=user).order_by('-created_at')
+                logger.info(f"Resident view - user items: {items.count()}")
+
+            if not items.exists():
+                return Response(
+                    {
+                        "success": True,
+                        "message": "No found items found for this user.",
+                        "data": []
+                    },
+                    status=status.HTTP_200_OK
+                )
+
+            serializer = self.get_serializer(items, many=True)
+            return Response(
+                {
+                    "success": True,
+                    "message": "Found items retrieved successfully.",
+                    "data": serializer.data
+                },
+                status=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in my_found_items: {str(e)}")
+            return Response(
+                {
+                    "success": False,
+                    "message": "Failed to load found items.",
+                    "error": str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     @action(detail=True, methods=['post'])
     def mark_returned(self, request, pk=None):
         """
         Mark a found item as returned (allowed for item owner or admin).
         """
-        item = self.get_object()
-        if item.user != request.user and getattr(request.user, 'user_type', None) != 'admin':
-            return Response({"detail": "Not authorized."}, status=status.HTTP_403_FORBIDDEN)
-        item.status = 'returned'
-        item.save()
-        return Response({"detail": "Item marked as returned."})
+        try:
+            item = self.get_object()
+            user = request.user
+            
+            logger.info(f"Mark returned requested by: {user.username} for item ID: {pk}")
+            
+            # Check authorization
+            if item.user != user and getattr(user, 'user_type', None) != 'admin':
+                logger.warning(f"Unauthorized mark returned attempt by user: {user.username}")
+                return Response(
+                    {
+                        "success": False,
+                        "message": "Not authorized to mark this item as returned."
+                    },
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            item.status = 'returned'
+            item.save()
+            
+            logger.info(f"Item {item.id} marked as returned successfully")
+            
+            return Response(
+                {
+                    "success": True,
+                    "message": "Item marked as returned successfully."
+                },
+                status=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            logger.error(f"Error marking item as returned: {str(e)}")
+            return Response(
+                {
+                    "success": False,
+                    "message": "Failed to mark item as returned.",
+                    "error": str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 ######################################################################################################################################################################################################
 # Claim ViewSet
 class ClaimViewSet(viewsets.ModelViewSet):
@@ -1216,4 +1428,5 @@ def regenerate_image_features(request, item_type, item_id):
             {"error": "Failed to generate image features"}, 
             status=status.HTTP_400_BAD_REQUEST
         )
+
 
