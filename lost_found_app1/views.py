@@ -45,8 +45,8 @@ from .models import (
 ################################################################################################################################
 from .serializers import *
 ################################
-from .models import ImageFeature, generate_image_embedding, LostItem, FoundItem ####========> new updated
-import numpy as np  ##############==> new updated==>
+# from .models import ImageFeature, generate_image_embedding, LostItem, FoundItem ####========> new updated
+# import numpy as np  ##############==> new updated==>
 #####################################################################################
 ##############################################################################################################################################################
 #########################################################################################################################################################
@@ -751,4 +751,5 @@ def verify_found_item(request, item_id):
 #         },
 #         'results': serializer.data
 #     }, status=status.HTTP_200_OK)
+
 
