@@ -289,13 +289,15 @@ class CategoryViewSet(viewsets.ModelViewSet):
         return [permission() for permission in permission_classes]
 ###################################################################################################################################################################################################
 ##############################################################################################################################################################################################
+# ===========================================
+# LOST ITEM VIEWSET
+# ===========================================
 class LostItemViewSet(viewsets.ModelViewSet):
     """
     Lost item management.
     - Admin can view all items.
     - Resident sees only their own.
     - Returns success message on create.
-    - Returns message if user has no lost items.
     """
     serializer_class = LostItemSerializer
     permission_classes = [IsAuthenticated]
@@ -309,47 +311,49 @@ class LostItemViewSet(viewsets.ModelViewSet):
         if user.user_type == 'admin':
             return base_qs
         else:
-            # ✅ Resident: show only own lost items (if any)
-            qs = base_qs.filter(user=user)
-            return qs.none() if not qs.exists() else qs
-    ############################################################################################################
-    # views.py
+            # ✅ Resident: show only own lost items
+            return base_qs.filter(user=user)
+
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         try:
             serializer.is_valid(raise_exception=True)
-            serializer.save(user=request.user)
-    
+            # Pass user in context instead of save parameter
+            lost_item = serializer.save()
+            
+            # Get the serialized data for response
+            response_serializer = self.get_serializer(lost_item)
+
             return Response(
                 {
                     "success": True,
                     "message": "Lost item added successfully!",
-                    "data": serializer.data
+                    "data": response_serializer.data
                 },
                 status=status.HTTP_201_CREATED
             )
         except serializers.ValidationError as e:
             # Handle validation errors specifically
-            logger.exception("Validation error creating Lost Item: %s", e)
+            logger.error(f"Validation error creating Lost Item: {e}")
             return Response(
                 {
                     "success": False,
-                    "message": "Validation error. Please check your input.",
-                    "error": e.detail
+                    "message": "Please check your input data.",
+                    "errors": e.detail
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
-            logger.exception("Error creating Lost Item: %s", e)
+            logger.error(f"Unexpected error creating Lost Item: {e}")
             return Response(
                 {
                     "success": False,
-                    "message": "Something went wrong while adding the lost item. Please try again.",
+                    "message": "An unexpected error occurred. Please try again.",
                     "error": str(e)
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    ####################################################################################################################################################
+
     @action(detail=False, methods=['get'])
     def my_lost_items(self, request):
         """
@@ -364,7 +368,7 @@ class LostItemViewSet(viewsets.ModelViewSet):
 
         if not items.exists():
             return Response(
-                {"detail": "No lost items found for this user."},
+                {"message": "No lost items found."},
                 status=status.HTTP_200_OK
             )
 
@@ -994,6 +998,7 @@ def image_based_search(request):
         },
         'results': serializer.data
     }, status=status.HTTP_200_OK)
+
 
 
 
