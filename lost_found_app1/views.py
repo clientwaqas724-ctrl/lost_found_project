@@ -40,6 +40,12 @@ from rest_framework.response import Response
 from django.contrib.auth import get_user_model
 logger = logging.getLogger(__name__)
 User = get_user_model()
+#####################################################################################
+# Remove the problematic import and use these instead:
+from .models import ImageFeature, generate_image_fingerprint, find_similar_images, LostItem, FoundItem
+from django.shortcuts import get_object_or_404  # Add this import
+import numpy as np
+##############################################################################################################################################################
 ################################################################################################################################
 from .models import (
     User,
@@ -1428,5 +1434,6 @@ def regenerate_image_features(request, item_type, item_id):
             {"error": "Failed to generate image features"}, 
             status=status.HTTP_400_BAD_REQUEST
         )
+
 
 
