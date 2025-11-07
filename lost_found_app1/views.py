@@ -32,6 +32,14 @@ from rest_framework import generics, permissions, status
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action, api_view, permission_classes
 from django.utils import timezone
+import logging
+import traceback
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from django.contrib.auth import get_user_model
+logger = logging.getLogger(__name__)
+User = get_user_model()
 ################################################################################################################################
 from .models import (
     User,
@@ -1107,6 +1115,7 @@ def image_based_search(request):
         },
         'results': serializer.data
     }, status=status.HTTP_200_OK)
+
 
 
 
