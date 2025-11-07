@@ -329,15 +329,13 @@ class CategorySerializer(serializers.ModelSerializer):
 
 #########################################################################################################################################################################################################
 # ===============================
-# LOST ITEM SERIALIZER
+# LOST ITEM SERIALIZER (with clean create)
 # ===============================
 class LostItemSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
     user_id = serializers.IntegerField(source='user.id', read_only=True)
     category_name = serializers.CharField(source='category.name', read_only=True)
     item_image = serializers.ImageField(required=False, allow_null=True)
-    
-    # ✅ FLEXIBLE: Accept both category ID or name
     category = serializers.CharField(required=False, allow_blank=True)
 
     search_tags_list = serializers.SerializerMethodField()
@@ -355,100 +353,78 @@ class LostItemSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'user', 'user_id', 'created_at', 'updated_at', 'is_verified']
 
-    def get_search_tags_list(self, obj):
-        return obj.get_search_tags_list()
-
-    def get_color_tags_list(self, obj):
-        return obj.get_color_tags_list()
-
-    def get_material_tags_list(self, obj):
-        return obj.get_material_tags_list()
-
+    # -----------------------------
+    # Category, validation helpers
+    # -----------------------------
     def validate_category(self, value):
-        """Convert category name or ID to Category object"""
         if not value or value == '':
             return None
-
         try:
             if value.isdigit():
-                category = Category.objects.get(id=int(value))
-            else:
-                category = Category.objects.get(name__iexact=value.strip())
-            return category
+                return Category.objects.get(id=int(value))
+            return Category.objects.get(name__iexact=value.strip())
         except Category.DoesNotExist:
-            raise serializers.ValidationError(
-                f"Category '{value}' does not exist. Please select a valid category or leave empty."
-            )
-        except (ValueError, AttributeError) as e:
-            logger.error(f"Category validation error: {e}")
-            raise serializers.ValidationError("Invalid category format. Use category ID or name.")
+            raise serializers.ValidationError(f"Category '{value}' does not exist.")
 
     def validate(self, data):
-        """Additional validation for required fields"""
         errors = {}
-        required_fields = {
+        for field, msg in {
             'title': 'Title is required.',
             'description': 'Description is required.',
             'lost_location': 'Lost location is required.',
             'lost_date': 'Lost date is required.'
-        }
-
-        for field, message in required_fields.items():
+        }.items():
             if not data.get(field):
-                errors[field] = message
-
+                errors[field] = msg
         if errors:
             raise serializers.ValidationError(errors)
-
         return data
 
-    def to_representation(self, instance):
-        """Convert category object to name in response"""
-        representation = super().to_representation(instance)
-        representation['category'] = instance.category.name if instance.category else None
-        return representation
-
-    # ✅ FIXED CREATE METHOD
+    # -----------------------------
+    # FIXED CREATE METHOD
+    # -----------------------------
     def create(self, validated_data):
+        """Create LostItem safely (no duplicate user bug, proper context)."""
         request = self.context.get('request')
         if not request:
-            raise serializers.ValidationError("Request context is missing")
+            raise serializers.ValidationError("Serializer missing request context.")
 
         user = request.user
-        logger.info(f"Creating lost item for user: {user.username}")
-
-        # Extract image data before creating instance
         image_data = validated_data.pop('item_image', None)
-
-        # ✅ Prevent duplicate user assignment
         validated_data.pop('user', None)
 
         try:
-            # ✅ Create instance only once
             instance = LostItem.objects.create(user=user, **validated_data)
 
-            # ✅ Handle image upload
+            # Handle image separately
             if image_data:
-                logger.info(f"Processing image for lost item: {image_data}")
-                if hasattr(image_data, 'file'):  # Uploaded file
+                if hasattr(image_data, 'file'):
                     instance.item_image = image_data
                     instance.save()
                 elif isinstance(image_data, str) and image_data.startswith('http'):
+                    from urllib.request import urlopen
+                    from django.core.files.base import ContentFile
                     try:
                         image_name = f"lost_item_{instance.id}.jpg"
-                        image_content = urlopen(image_data).read()
-                        instance.item_image.save(image_name, ContentFile(image_content), save=True)
+                        content = urlopen(image_data).read()
+                        instance.item_image.save(image_name, ContentFile(content), save=True)
                     except Exception as e:
-                        logger.warning(f"Failed to download image from URL: {e}")
-                        # Continue without breaking
+                        logger.warning(f"Failed to fetch image URL: {e}")
 
-            logger.info(f"Lost item created successfully with ID: {instance.id}")
             return instance
 
         except Exception as e:
-            logger.error(f"Error creating LostItem instance: {str(e)}")
-            logger.error(f"Validated data: {validated_data}")
-            raise serializers.ValidationError(f"Failed to create lost item: {str(e)}")
+            logger.error(f"LostItem create() failed: {e}")
+            raise serializers.ValidationError(f"Failed to create lost item: {e}")
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        rep['category'] = instance.category.name if instance.category else None
+        return rep
+
+    def get_search_tags_list(self, obj): return obj.get_search_tags_list()
+    def get_color_tags_list(self, obj): return obj.get_color_tags_list()
+    def get_material_tags_list(self, obj): return obj.get_material_tags_list()
 #########################################################################################################################################################################################################
 class FoundItemSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
@@ -697,6 +673,7 @@ class ImageSearchRequestSerializer(serializers.Serializer):
     image = serializers.ImageField()
     search_type = serializers.ChoiceField(choices=['lost', 'found', 'both'], default='both')
     max_results = serializers.IntegerField(default=10, min_value=1, max_value=50)
+
 
 
 
