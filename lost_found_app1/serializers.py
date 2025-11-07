@@ -9,7 +9,7 @@ from urllib.request import urlopen
 from urllib.parse import urlparse
 import os
 import uuid
-from .models import ImageFeature
+# from .models import ImageFeature
 #################################################################################################################################################
 #################################################################################################################################################
 class RegisterSerializer(serializers.ModelSerializer):
@@ -479,3 +479,4 @@ class ImageFeatureSerializer(serializers.ModelSerializer):
     class Meta:
         model = ImageFeature
         fields = ['id', 'item_type', 'item_id', 'created_at']
+
