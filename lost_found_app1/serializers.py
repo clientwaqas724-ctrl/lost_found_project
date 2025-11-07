@@ -472,11 +472,12 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
 ######################################################################################################
-class ImageFeatureSerializer(serializers.ModelSerializer):
-    """
-    Serializer for image embeddings used in visual search.
-    """
-    class Meta:
-        model = ImageFeature
-        fields = ['id', 'item_type', 'item_id', 'created_at']
+# class ImageFeatureSerializer(serializers.ModelSerializer):
+#     """
+#     Serializer for image embeddings used in visual search.
+#     """
+#     class Meta:
+#         model = ImageFeature
+#         fields = ['id', 'item_type', 'item_id', 'created_at']
+
 
