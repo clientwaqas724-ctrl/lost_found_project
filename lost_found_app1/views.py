@@ -1072,66 +1072,148 @@ def verify_found_item(request, item_id):
 @permission_classes([IsAuthenticated])
 def image_based_search(request):
     """
-    Upload an image and find visually similar lost/found items using deep embeddings.
+    Upload an image and find visually similar lost/found items using custom fingerprint algorithm.
     """
-    uploaded_image = request.FILES.get('image')
-    search_type = request.data.get('search_type', 'found')  # or 'lost'
-    max_results = int(request.data.get('max_results', 10))
+    # Validate request data
+    serializer = ImageSearchRequestSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    uploaded_image = serializer.validated_data['image']
+    search_type = serializer.validated_data['search_type']
+    max_results = serializer.validated_data['max_results']
 
-    if not uploaded_image:
-        return Response({"error": "No image provided."}, status=status.HTTP_400_BAD_REQUEST)
+    # Find similar images using custom algorithm
+    similar_images = find_similar_images(uploaded_image, search_type, max_results)
+    
+    if not similar_images:
+        return Response({
+            'search_metadata': {
+                'search_type': search_type,
+                'results_count': 0,
+                'message': 'No similar items found'
+            },
+            'results': []
+        }, status=status.HTTP_200_OK)
 
-    # Generate embedding for the uploaded image
-    query_emb = generate_image_embedding(uploaded_image)
-    if query_emb is None:
-        return Response({"error": "Could not process image."}, status=status.HTTP_400_BAD_REQUEST)
+    # Prepare response data
+    results_data = []
+    lost_item_ids = []
+    found_item_ids = []
+    
+    # Separate item IDs by type
+    for result in similar_images:
+        if result['item_type'] == 'lost':
+            lost_item_ids.append(result['item_id'])
+        else:
+            found_item_ids.append(result['item_id'])
+    
+    # Fetch complete item data
+    lost_items = LostItem.objects.filter(id__in=lost_item_ids)
+    found_items = FoundItem.objects.filter(id__in=found_item_ids)
+    
+    # Create item mapping for easy lookup
+    items_map = {}
+    for item in lost_items:
+        items_map[('lost', item.id)] = item
+    for item in found_items:
+        items_map[('found', item.id)] = item
+    
+    # Build final results with complete item data
+    for result in similar_images:
+        item_key = (result['item_type'], result['item_id'])
+        if item_key in items_map:
+            item = items_map[item_key]
+            
+            if result['item_type'] == 'lost':
+                item_serializer = LostItemSerializer(item, context={'request': request})
+            else:
+                item_serializer = FoundItemSerializer(item, context={'request': request})
+            
+            results_data.append({
+                'item_type': result['item_type'],
+                'item_id': result['item_id'],
+                'similarity_score': result['similarity_score'],
+                'item_data': item_serializer.data,
+                'feature_data': ImageFeatureSerializer(result['feature']).data
+            })
 
-    query_vec = np.frombuffer(query_emb, dtype=np.float32)
-
-    # Retrieve stored embeddings of same item type
-    db_features = ImageFeature.objects.filter(item_type=search_type)
-    similarities = []
-    for feature in db_features:
-        vec = np.frombuffer(feature.embedding, dtype=np.float32)
-        sim = np.dot(query_vec, vec)  # cosine similarity
-        similarities.append((feature.item_id, sim))
-
-    # Sort by similarity and pick top results
-    similarities.sort(key=lambda x: x[1], reverse=True)
-    top_ids = [s[0] for s in similarities[:max_results]]
-
-    # Fetch matched items
-    if search_type == 'lost':
-        matched_items = LostItem.objects.filter(id__in=top_ids)
-        serializer = LostItemSerializer(matched_items, many=True, context={'request': request})
-    else:
-        matched_items = FoundItem.objects.filter(id__in=top_ids)
-        serializer = FoundItemSerializer(matched_items, many=True, context={'request': request})
+    # Sort by similarity score (already sorted by the function, but ensure order)
+    results_data.sort(key=lambda x: x['similarity_score'], reverse=True)
 
     return Response({
         'search_metadata': {
             'search_type': search_type,
-            'results_count': len(serializer.data)
+            'results_count': len(results_data),
+            'min_score': min([r['similarity_score'] for r in results_data]) if results_data else 0,
+            'max_score': max([r['similarity_score'] for r in results_data]) if results_data else 0
         },
-        'results': serializer.data
+        'results': results_data
     }, status=status.HTTP_200_OK)
 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_image_features(request, item_type, item_id):
+    """
+    Get image features for a specific item
+    """
+    try:
+        feature = ImageFeature.objects.get(item_type=item_type, item_id=item_id)
+        serializer = ImageFeatureSerializer(feature)
+        return Response(serializer.data)
+    except ImageFeature.DoesNotExist:
+        return Response(
+            {"error": "Image features not found for this item"}, 
+            status=status.HTTP_404_NOT_FOUND
+        )
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def regenerate_image_features(request, item_type, item_id):
+    """
+    Regenerate image features for a specific item
+    """
+    # Determine which model to use based on item_type
+    if item_type == 'lost':
+        model_class = LostItem
+    elif item_type == 'found':
+        model_class = FoundItem
+    else:
+        return Response(
+            {"error": "Invalid item type"}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Get the item
+    item = get_object_or_404(model_class, id=item_id)
+    
+    if not item.item_image:
+        return Response(
+            {"error": "Item has no image"}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Import the signal function to regenerate features
+    from .models import generate_image_fingerprint
+    
+    fingerprint = generate_image_fingerprint(item.item_image)
+    if fingerprint:
+        ImageFeature.objects.update_or_create(
+            item_type=item_type,
+            item_id=item_id,
+            defaults=fingerprint
+        )
+        
+        # Return updated features
+        feature = ImageFeature.objects.get(item_type=item_type, item_id=item_id)
+        serializer = ImageFeatureSerializer(feature)
+        return Response({
+            "message": "Image features regenerated successfully",
+            "features": serializer.data
+        })
+    else:
+        return Response(
+            {"error": "Failed to generate image features"}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
 
