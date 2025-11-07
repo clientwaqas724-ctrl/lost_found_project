@@ -312,25 +312,32 @@ class LostItemViewSet(viewsets.ModelViewSet):
             # ✅ Resident: show only own lost items (if any)
             qs = base_qs.filter(user=user)
             return qs.none() if not qs.exists() else qs
-
+    ############################################################################################################
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(
-                {"success": False, "errors": serializer.errors},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        try:
+            serializer.is_valid(raise_exception=True)
+            serializer.save(user=request.user)
     
-        serializer.save(user=request.user)
-        return Response(
-            {
-                "success": True,
-                "message": "Lost item added successfully.",
-                "data": serializer.data
-            },
-            status=status.HTTP_201_CREATED
-        )
-        
+            return Response(
+                {
+                    "success": True,
+                    "message": "Lost item added successfully!",
+                    "data": serializer.data
+                },
+                status=status.HTTP_201_CREATED
+            )
+        except Exception as e:
+            logger.exception("Error creating Lost Item: %s", e)
+            return Response(
+                {
+                    "success": False,
+                    "message": "Something went wrong while adding the lost item. Please try again.",
+                    "error": str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    ####################################################################################################################################################
     @action(detail=False, methods=['get'])
     def my_lost_items(self, request):
         """
@@ -975,6 +982,7 @@ def image_based_search(request):
         },
         'results': serializer.data
     }, status=status.HTTP_200_OK)
+
 
 
 
