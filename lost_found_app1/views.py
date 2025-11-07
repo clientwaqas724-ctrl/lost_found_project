@@ -49,20 +49,6 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from lost_found_app1.models import LostItem, FoundItem, Category, ImageSearchLog
-from lost_found_app1.serializers import (
-    LostItemSerializer,
-    FoundItemSerializer,
-    ManualImageSearchSerializer,
-)
-from .models import (
-    User,
-    Category,
-    LostItem,
-    FoundItem, 
-    Claim, 
-    Notification,
-    ImageSearchLog   
-)
 from .serializers import *
 import re
 
@@ -1246,4 +1232,5 @@ def regenerate_image_features(request, item_type, item_id):
             {"error": "Failed to generate image features"}, 
             status=status.HTTP_400_BAD_REQUEST
         )
+
 
