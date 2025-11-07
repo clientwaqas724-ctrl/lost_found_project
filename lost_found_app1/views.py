@@ -285,30 +285,50 @@ class CategoryViewSet(viewsets.ModelViewSet):
             permission_classes = [IsAuthenticated, IsAdminOnly]  # only admins can modify
         return [permission() for permission in permission_classes]
 ###################################################################################################################################################################################################
-#####################################################################################
-# LostItem ViewSet
+##############################################################################################################################################################################################
 class LostItemViewSet(viewsets.ModelViewSet):
     serializer_class = LostItemSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         """
-        Allow all authenticated users (residents & admins) to view all Lost Items.
+        - Admin: can see all lost items.
+        - Resident: can see only their own items.
         """
-        return LostItem.objects.all()
+        user = self.request.user
+        if user.user_type == 'admin':
+            return LostItem.objects.all()
+        else:
+            # Resident only sees their own added items
+            return LostItem.objects.filter(user=user)
 
-    def perform_create(self, serializer):
+    def create(self, request, *args, **kwargs):
         """
-        Automatically attach the current user as the creator when adding a lost item.
+        Override create() to return custom success message.
         """
-        serializer.save(user=self.request.user)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(user=request.user)
+        return Response(
+            {"message": "Lost item added successfully.", "data": serializer.data},
+            status=status.HTTP_201_CREATED
+        )
 
     @action(detail=False, methods=['get'])
     def my_lost_items(self, request):
         """
-        View only the lost items created by the current user.
+        Resident sees only their own lost items.
+        Admin sees all.
         """
-        items = LostItem.objects.filter(user=request.user)
+        user = request.user
+        if user.user_type == 'admin':
+            items = LostItem.objects.all()
+        else:
+            items = LostItem.objects.filter(user=user)
+        
+        if not items.exists():
+            return Response({"detail": "No lost items found for this user."}, status=status.HTTP_200_OK)
+
         serializer = self.get_serializer(items, many=True)
         return Response(serializer.data)
 
@@ -324,7 +344,7 @@ class LostItemViewSet(viewsets.ModelViewSet):
         item.save()
         return Response({"detail": "Item marked as found."})
 #######################################################################################################################################################################################################
-#####################################################################################
+###################################################################################################################################################################################################
 # FoundItem ViewSet
 class FoundItemViewSet(viewsets.ModelViewSet):
     serializer_class = FoundItemSerializer
@@ -935,6 +955,7 @@ def image_based_search(request):
         },
         'results': serializer.data
     }, status=status.HTTP_200_OK)
+
 
 
 
