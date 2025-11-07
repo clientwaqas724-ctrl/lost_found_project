@@ -20,7 +20,6 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 import logging
 logger = logging.getLogger(__name__)
-User = get_user_model()
 #################################################################################################################################################
 #################################################################################################################################################
 class RegisterSerializer(serializers.ModelSerializer):
@@ -587,6 +586,7 @@ class ImageFeatureSerializer(serializers.ModelSerializer):
     class Meta:
         model = ImageFeature
         fields = ['id', 'item_type', 'item_id', 'created_at']
+
 
 
 
