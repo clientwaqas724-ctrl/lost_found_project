@@ -45,6 +45,10 @@ User = get_user_model()
 from .models import ImageFeature, generate_image_fingerprint, find_similar_images, LostItem, FoundItem
 from django.shortcuts import get_object_or_404  # Add this import
 import numpy as np
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 ##############################################################################################################################################################
 ################################################################################################################################
 from .models import (
@@ -319,195 +323,136 @@ class LostItemViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         base_qs = LostItem.objects.select_related('user', 'category').order_by('-created_at')
-
         if user.user_type == 'admin':
             return base_qs
-        else:
-            return base_qs.filter(user=user)
+        return base_qs.filter(user=user)
 
     def create(self, request, *args, **kwargs):
         try:
-            logger.info(f"=== START LOST ITEM CREATION ===")
+            logger.info("=== START LOST ITEM CREATION ===")
             logger.info(f"User: {request.user.username} (ID: {request.user.id})")
             logger.info(f"User type: {request.user.user_type}")
-            logger.info(f"Request method: {request.method}")
-            logger.info(f"Content type: {request.content_type}")
             logger.info(f"Request data: {request.data}")
-            logger.info(f"Request FILES: {request.FILES}")
-            
-            # Check if user is authenticated
+            logger.info(f"FILES: {request.FILES}")
+
             if not request.user.is_authenticated:
                 return Response(
-                    {
-                        "success": False,
-                        "message": "User not authenticated."
-                    },
-                    status=status.HTTP_401_UNAUTHORIZED
+                    {"success": False, "message": "User not authenticated."},
+                    status=status.HTTP_401_UNAUTHORIZED,
                 )
-            
+
             serializer = self.get_serializer(data=request.data)
-            
-            # Log serializer initialization
-            logger.info("Serializer initialized")
-            
-            # Validate data
             if not serializer.is_valid():
                 logger.warning(f"Validation errors: {serializer.errors}")
                 return Response(
                     {
                         "success": False,
-                        "message": "Please fix the validation errors below.",
-                        "errors": serializer.errors
+                        "message": "Please fix the validation errors.",
+                        "errors": serializer.errors,
                     },
-                    status=status.HTTP_400_BAD_REQUEST
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
-            
-            logger.info("Serializer validation passed")
-            
-            # Save the lost item
-            lost_item = serializer.save()
-            
-            logger.info(f"Lost item saved successfully with ID: {lost_item.id}")
-            
-            # Serialize the created instance for response
+
+            # Save item with the current user
+            lost_item = serializer.save(user=request.user)
             response_serializer = self.get_serializer(lost_item)
-            
-            logger.info(f"=== END LOST ITEM CREATION - SUCCESS ===")
-            
+
+            logger.info("=== END LOST ITEM CREATION SUCCESS ===")
             return Response(
                 {
                     "success": True,
                     "message": "Lost item added successfully!",
-                    "data": response_serializer.data
+                    "data": response_serializer.data,
                 },
-                status=status.HTTP_201_CREATED
+                status=status.HTTP_201_CREATED,
             )
-            
+
         except Exception as e:
-            logger.error(f"=== LOST ITEM CREATION FAILED ===")
-            logger.error(f"Error: {str(e)}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            logger.error(f"=== END ERROR ===")
-            
-            # Provide specific error messages based on error type
-            error_message = "Something went wrong while adding the lost item."
-            
-            if "validation" in str(e).lower():
-                error_message = "Validation error. Please check your input."
-            elif "category" in str(e).lower():
-                error_message = "Category error. Please select a valid category."
-            elif "image" in str(e).lower():
-                error_message = "Image upload error. Please try a different image."
-            
+            logger.error(f"Error creating lost item: {str(e)}")
+            logger.error(traceback.format_exc())
             return Response(
                 {
                     "success": False,
-                    "message": error_message,
-                    "error": str(e)
+                    "message": "Something went wrong while adding the lost item.",
+                    "error": str(e),
                 },
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
     def list(self, request, *args, **kwargs):
         """
-        Override list to provide consistent response format
+        Consistent, clean list response for admin and residents
         """
         try:
             queryset = self.filter_queryset(self.get_queryset())
-            
-            # Log query information
             logger.info(f"Listing lost items for user: {request.user.username}")
-            logger.info(f"Total items found: {queryset.count()}")
-            
-            # Check if queryset is empty
-            if not queryset.exists():
-                return Response(
-                    {
-                        "success": True,
-                        "message": "No lost items found.",
-                        "data": []
-                    },
-                    status=status.HTTP_200_OK
-                )
-            
+            total_items = queryset.count()
+            logger.info(f"Total items found: {total_items}")
+
             page = self.paginate_queryset(queryset)
             if page is not None:
                 serializer = self.get_serializer(page, many=True)
-                return self.get_paginated_response({
-                    "success": True,
-                    "message": "Lost items retrieved successfully.",
-                    "data": serializer.data
-                })
+                return self.get_paginated_response(serializer.data)
 
             serializer = self.get_serializer(queryset, many=True)
             return Response(
                 {
                     "success": True,
                     "message": "Lost items retrieved successfully.",
-                    "data": serializer.data
+                    "count": total_items,
+                    "data": serializer.data,
                 },
-                status=status.HTTP_200_OK
+                status=status.HTTP_200_OK,
             )
-            
+
         except Exception as e:
             logger.error(f"Error retrieving lost items: {str(e)}")
             logger.error(traceback.format_exc())
-            
             return Response(
                 {
                     "success": False,
                     "message": "Failed to load lost items.",
-                    "error": str(e)
+                    "error": str(e),
                 },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
     @action(detail=False, methods=['get'])
     def my_lost_items(self, request):
         """
-        Resident: show only own lost items.
+        Resident: show only their own lost items.
         Admin: show all.
         """
         try:
             user = request.user
             logger.info(f"My lost items requested by: {user.username}")
-            
+
             if user.user_type == 'admin':
                 items = LostItem.objects.all().order_by('-created_at')
-                logger.info(f"Admin view - total items: {items.count()}")
             else:
                 items = LostItem.objects.filter(user=user).order_by('-created_at')
-                logger.info(f"Resident view - user items: {items.count()}")
-
-            if not items.exists():
-                return Response(
-                    {
-                        "success": True,
-                        "message": "No lost items found for this user.",
-                        "data": []
-                    },
-                    status=status.HTTP_200_OK
-                )
 
             serializer = self.get_serializer(items, many=True)
             return Response(
                 {
                     "success": True,
                     "message": "Lost items retrieved successfully.",
-                    "data": serializer.data
+                    "count": items.count(),
+                    "data": serializer.data,
                 },
-                status=status.HTTP_200_OK
+                status=status.HTTP_200_OK,
             )
-            
+
         except Exception as e:
             logger.error(f"Error in my_lost_items: {str(e)}")
+            logger.error(traceback.format_exc())
             return Response(
                 {
                     "success": False,
                     "message": "Failed to load lost items.",
-                    "error": str(e)
+                    "error": str(e),
                 },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 #######################################################################################################################################################################################################
 ###################################################################################################################################################################################################
@@ -516,7 +461,7 @@ class FoundItemViewSet(viewsets.ModelViewSet):
     Found item management.
     - Admin can view all items.
     - Resident sees only their own.
-    - Returns success message on create.
+    - Consistent JSON response format.
     """
     serializer_class = FoundItemSerializer
     permission_classes = [IsAuthenticated]
@@ -525,240 +470,189 @@ class FoundItemViewSet(viewsets.ModelViewSet):
         user = self.request.user
         base_qs = FoundItem.objects.select_related('user', 'category').order_by('-created_at')
 
-        if user.user_type == 'admin':
+        if getattr(user, 'user_type', '') == 'admin':
             return base_qs
         else:
             return base_qs.filter(user=user)
 
     def create(self, request, *args, **kwargs):
+        """
+        Create a new found item with user auto-assigned.
+        """
         try:
-            logger.info(f"=== START FOUND ITEM CREATION ===")
-            logger.info(f"User: {request.user.username} (ID: {request.user.id})")
-            logger.info(f"User type: {request.user.user_type}")
-            logger.info(f"Request method: {request.method}")
-            logger.info(f"Content type: {request.content_type}")
-            logger.info(f"Request data: {request.data}")
-            logger.info(f"Request FILES: {request.FILES}")
-            
-            # Check if user is authenticated
+            logger.info(f"=== FOUND ITEM CREATE === User: {request.user.username}")
+
             if not request.user.is_authenticated:
                 return Response(
-                    {
-                        "success": False,
-                        "message": "User not authenticated."
-                    },
-                    status=status.HTTP_401_UNAUTHORIZED
+                    {"success": False, "message": "User not authenticated."},
+                    status=status.HTTP_401_UNAUTHORIZED,
                 )
-            
+
             serializer = self.get_serializer(data=request.data)
-            
-            # Log serializer initialization
-            logger.info("Serializer initialized")
-            
-            # Validate data
             if not serializer.is_valid():
                 logger.warning(f"Validation errors: {serializer.errors}")
                 return Response(
                     {
                         "success": False,
                         "message": "Please fix the validation errors below.",
-                        "errors": serializer.errors
+                        "errors": serializer.errors,
                     },
-                    status=status.HTTP_400_BAD_REQUEST
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
-            
-            logger.info("Serializer validation passed")
-            
-            # Save the found item
-            found_item = serializer.save()
-            
-            logger.info(f"Found item saved successfully with ID: {found_item.id}")
-            
-            # Serialize the created instance for response
+
+            # ✅ Assign logged-in user automatically
+            found_item = serializer.save(user=request.user)
+
             response_serializer = self.get_serializer(found_item)
-            
-            logger.info(f"=== END FOUND ITEM CREATION - SUCCESS ===")
-            
+            logger.info(f"Found item created successfully (ID: {found_item.id})")
+
             return Response(
                 {
                     "success": True,
                     "message": "Found item added successfully!",
-                    "data": response_serializer.data
+                    "data": response_serializer.data,
                 },
-                status=status.HTTP_201_CREATED
+                status=status.HTTP_201_CREATED,
             )
-            
+
         except Exception as e:
-            logger.error(f"=== FOUND ITEM CREATION FAILED ===")
-            logger.error(f"Error: {str(e)}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            logger.error(f"=== END ERROR ===")
-            
-            # Provide specific error messages based on error type
-            error_message = "Something went wrong while adding the found item."
-            
-            if "validation" in str(e).lower():
-                error_message = "Validation error. Please check your input."
-            elif "category" in str(e).lower():
-                error_message = "Category error. Please select a valid category."
-            elif "image" in str(e).lower():
-                error_message = "Image upload error. Please try a different image."
-            
+            logger.error(f"Error creating found item: {str(e)}")
+            logger.error(traceback.format_exc())
             return Response(
                 {
                     "success": False,
-                    "message": error_message,
-                    "error": str(e)
+                    "message": "Failed to add found item.",
+                    "error": str(e),
                 },
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
     def list(self, request, *args, **kwargs):
         """
-        Override list to provide consistent response format
+        Consistent response for listing found items.
         """
         try:
             queryset = self.filter_queryset(self.get_queryset())
-            
-            # Log query information
-            logger.info(f"Listing found items for user: {request.user.username}")
-            logger.info(f"Total items found: {queryset.count()}")
-            
-            # Check if queryset is empty
+            logger.info(f"Listing items for: {request.user.username}")
+
             if not queryset.exists():
                 return Response(
                     {
                         "success": True,
-                        "message": "No found items found.",
-                        "data": []
+                        "message": "No found items available.",
+                        "data": [],
                     },
-                    status=status.HTTP_200_OK
+                    status=status.HTTP_200_OK,
                 )
-            
+
             page = self.paginate_queryset(queryset)
             if page is not None:
                 serializer = self.get_serializer(page, many=True)
-                return self.get_paginated_response({
-                    "success": True,
-                    "message": "Found items retrieved successfully.",
-                    "data": serializer.data
-                })
+                paginated_data = self.get_paginated_response(serializer.data).data
+                # ✅ Wrap pagination result into a consistent structure
+                return Response(
+                    {
+                        "success": True,
+                        "message": "Found items retrieved successfully.",
+                        "data": paginated_data,
+                    },
+                    status=status.HTTP_200_OK,
+                )
 
             serializer = self.get_serializer(queryset, many=True)
             return Response(
                 {
                     "success": True,
                     "message": "Found items retrieved successfully.",
-                    "data": serializer.data
+                    "data": serializer.data,
                 },
-                status=status.HTTP_200_OK
+                status=status.HTTP_200_OK,
             )
-            
+
         except Exception as e:
-            logger.error(f"Error retrieving found items: {str(e)}")
+            logger.error(f"Error listing found items: {str(e)}")
             logger.error(traceback.format_exc())
-            
             return Response(
                 {
                     "success": False,
                     "message": "Failed to load found items.",
-                    "error": str(e)
+                    "error": str(e),
                 },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
     @action(detail=False, methods=['get'])
     def my_found_items(self, request):
         """
-        Resident: show only own found items.
-        Admin: show all.
+        Resident: show own found items
+        Admin: show all
         """
         try:
             user = request.user
-            logger.info(f"My found items requested by: {user.username}")
-            
-            if user.user_type == 'admin':
+            if getattr(user, 'user_type', '') == 'admin':
                 items = FoundItem.objects.all().order_by('-created_at')
-                logger.info(f"Admin view - total items: {items.count()}")
             else:
                 items = FoundItem.objects.filter(user=user).order_by('-created_at')
-                logger.info(f"Resident view - user items: {items.count()}")
-
-            if not items.exists():
-                return Response(
-                    {
-                        "success": True,
-                        "message": "No found items found for this user.",
-                        "data": []
-                    },
-                    status=status.HTTP_200_OK
-                )
 
             serializer = self.get_serializer(items, many=True)
             return Response(
                 {
                     "success": True,
                     "message": "Found items retrieved successfully.",
-                    "data": serializer.data
+                    "data": serializer.data,
                 },
-                status=status.HTTP_200_OK
+                status=status.HTTP_200_OK,
             )
-            
+
         except Exception as e:
             logger.error(f"Error in my_found_items: {str(e)}")
             return Response(
                 {
                     "success": False,
                     "message": "Failed to load found items.",
-                    "error": str(e)
+                    "error": str(e),
                 },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
     @action(detail=True, methods=['post'])
     def mark_returned(self, request, pk=None):
         """
-        Mark a found item as returned (allowed for item owner or admin).
+        Mark item as returned (owner or admin only).
         """
         try:
             item = self.get_object()
             user = request.user
-            
-            logger.info(f"Mark returned requested by: {user.username} for item ID: {pk}")
-            
-            # Check authorization
-            if item.user != user and getattr(user, 'user_type', None) != 'admin':
-                logger.warning(f"Unauthorized mark returned attempt by user: {user.username}")
+
+            if item.user != user and getattr(user, 'user_type', '') != 'admin':
                 return Response(
                     {
                         "success": False,
-                        "message": "Not authorized to mark this item as returned."
+                        "message": "Not authorized to mark this item as returned.",
                     },
-                    status=status.HTTP_403_FORBIDDEN
+                    status=status.HTTP_403_FORBIDDEN,
                 )
-            
+
             item.status = 'returned'
             item.save()
-            
-            logger.info(f"Item {item.id} marked as returned successfully")
-            
+
             return Response(
                 {
                     "success": True,
-                    "message": "Item marked as returned successfully."
+                    "message": "Item marked as returned successfully.",
                 },
-                status=status.HTTP_200_OK
+                status=status.HTTP_200_OK,
             )
-            
+
         except Exception as e:
             logger.error(f"Error marking item as returned: {str(e)}")
             return Response(
                 {
                     "success": False,
                     "message": "Failed to mark item as returned.",
-                    "error": str(e)
+                    "error": str(e),
                 },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 ######################################################################################################################################################################################################
 # Claim ViewSet
@@ -1434,6 +1328,7 @@ def regenerate_image_features(request, item_type, item_id):
             {"error": "Failed to generate image features"}, 
             status=status.HTTP_400_BAD_REQUEST
         )
+
 
 
 
