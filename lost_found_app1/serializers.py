@@ -320,7 +320,6 @@ class CategorySerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at']
 
 #########################################################################################################################################################################################################
-# serializers.py
 class LostItemSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
     user_id = serializers.IntegerField(source='user.id', read_only=True)
@@ -328,7 +327,7 @@ class LostItemSerializer(serializers.ModelSerializer):
     item_image = serializers.ImageField(required=False, allow_null=True)
     
     # ✅ FLEXIBLE: Accept both category ID or name
-    category = serializers.CharField(required=True)
+    category = serializers.CharField(required=False, allow_blank=True)
 
     search_tags_list = serializers.SerializerMethodField()
     color_tags_list = serializers.SerializerMethodField()
@@ -356,18 +355,30 @@ class LostItemSerializer(serializers.ModelSerializer):
 
     def validate_category(self, value):
         """Convert category name or ID to Category object"""
+        if not value:  # Allow empty category
+            return None
+            
         try:
             # Try to find by ID first
             if value.isdigit():
                 category = Category.objects.get(id=int(value))
             else:
-                # Try to find by name
-                category = Category.objects.get(name=value)
+                # Try to find by name (case insensitive)
+                category = Category.objects.get(name__iexact=value.strip())
             return category
         except Category.DoesNotExist:
-            raise serializers.ValidationError(f"Category '{value}' does not exist.")
+            raise serializers.ValidationError(f"Category '{value}' does not exist. Please select a valid category.")
         except (ValueError, AttributeError):
             raise serializers.ValidationError("Invalid category format. Use category ID or name.")
+
+    def validate(self, data):
+        """Additional validation for required fields"""
+        required_fields = ['title', 'description', 'lost_location', 'lost_date']
+        for field in required_fields:
+            if not data.get(field):
+                raise serializers.ValidationError({field: f"This field is required."})
+        
+        return data
 
     def to_representation(self, instance):
         """Convert category object to name in response"""
@@ -380,20 +391,14 @@ class LostItemSerializer(serializers.ModelSerializer):
         user = request.user
         image_data = validated_data.pop('item_image', None)
         
-        # Category is already converted to object in validate_category
+        # Create the instance
         instance = LostItem(**validated_data)
         instance.user = user
 
-        # Handle image (multipart or URL)
-        if isinstance(image_data, str) and image_data.startswith("http"):
-            try:
-                image_name = os.path.basename(urlparse(image_data).path)
-                image_content = urlopen(image_data).read()
-                instance.item_image.save(image_name, ContentFile(image_content), save=False)
-            except Exception as e:
-                raise serializers.ValidationError({"item_image": f"Invalid image URL: {e}"})
-        elif image_data:
+        # Handle image - only if provided and not a URL (simplified)
+        if image_data and hasattr(image_data, 'file'):  # It's an uploaded file
             instance.item_image = image_data
+        # Skip URL image handling for now to simplify
 
         instance.save()
         return instance
@@ -536,6 +541,7 @@ class ImageFeatureSerializer(serializers.ModelSerializer):
     class Meta:
         model = ImageFeature
         fields = ['id', 'item_type', 'item_id', 'created_at']
+
 
 
 
