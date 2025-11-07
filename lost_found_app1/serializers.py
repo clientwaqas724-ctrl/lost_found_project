@@ -581,12 +581,29 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
 ######################################################################################################
 class ImageFeatureSerializer(serializers.ModelSerializer):
     """
-    Serializer for image embeddings used in visual search.
+    Serializer for image features used in visual search.
     """
     class Meta:
         model = ImageFeature
-        fields = ['id', 'item_type', 'item_id', 'created_at']
+        fields = ['id', 'item_type', 'item_id', 'dominant_colors', 'color_palette', 
+                 'image_size', 'file_size', 'aspect_ratio', 'image_hash', 'created_at']
 
+class ImageSearchResultSerializer(serializers.Serializer):
+    """
+    Serializer for image search results
+    """
+    item_type = serializers.CharField()
+    item_id = serializers.UUIDField()
+    similarity_score = serializers.FloatField()
+    feature = ImageFeatureSerializer()
+
+class ImageSearchRequestSerializer(serializers.Serializer):
+    """
+    Serializer for image search request validation
+    """
+    image = serializers.ImageField()
+    search_type = serializers.ChoiceField(choices=['lost', 'found', 'both'], default='both')
+    max_results = serializers.IntegerField(default=10, min_value=1, max_value=50)
 
 
 
