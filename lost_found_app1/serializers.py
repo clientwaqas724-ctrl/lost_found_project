@@ -450,8 +450,13 @@ class LostItemSerializer(serializers.ModelSerializer):
 #########################################################################################################################################################################################################
 class FoundItemSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
-    user_id = serializers.IntegerField(source='user.id', read_only=True)  # ✅ Added user ID
+    user_id = serializers.IntegerField(source='user.id', read_only=True)
     category_name = serializers.CharField(source='category.name', read_only=True)
+    item_image = serializers.ImageField(required=False, allow_null=True)
+    
+    # ✅ FLEXIBLE: Accept both category ID or name
+    category = serializers.CharField(required=False, allow_blank=True)
+
     search_tags_list = serializers.SerializerMethodField()
     color_tags_list = serializers.SerializerMethodField()
     material_tags_list = serializers.SerializerMethodField()
@@ -480,9 +485,95 @@ class FoundItemSerializer(serializers.ModelSerializer):
     def get_material_tags_list(self, obj):
         return obj.get_material_tags_list()
 
+    def validate_category(self, value):
+        """Convert category name or ID to Category object"""
+        if not value or value == '':  # Allow empty category
+            return None
+            
+        try:
+            # Try to find by ID first
+            if value.isdigit():
+                category = Category.objects.get(id=int(value))
+            else:
+                # Try to find by name (case insensitive)
+                category = Category.objects.get(name__iexact=value.strip())
+            return category
+        except Category.DoesNotExist:
+            raise serializers.ValidationError(f"Category '{value}' does not exist. Please select a valid category or leave empty.")
+        except (ValueError, AttributeError) as e:
+            logger.error(f"Category validation error: {e}")
+            raise serializers.ValidationError("Invalid category format. Use category ID or name.")
+
+    def validate(self, data):
+        """Additional validation for required fields"""
+        errors = {}
+        
+        required_fields = {
+            'title': 'Title is required.',
+            'description': 'Description is required.', 
+            'found_location': 'Found location is required.',
+            'found_date': 'Found date is required.'
+        }
+        
+        for field, message in required_fields.items():
+            if not data.get(field):
+                errors[field] = message
+        
+        if errors:
+            raise serializers.ValidationError(errors)
+        
+        return data
+
+    def to_representation(self, instance):
+        """Convert category object to name in response"""
+        representation = super().to_representation(instance)
+        representation['category'] = instance.category.name if instance.category else None
+        return representation
+
     def create(self, validated_data):
-        validated_data['user'] = self.context['request'].user
-        return super().create(validated_data)
+        request = self.context.get('request')
+        if not request:
+            raise serializers.ValidationError("Request context is missing")
+            
+        user = request.user
+        logger.info(f"Creating found item for user: {user.username}")
+        
+        # Extract image data before creating instance
+        image_data = validated_data.pop('item_image', None)
+        image_url = validated_data.pop('image_url', None)
+        
+        try:
+            # ✅ FIX: Create the instance with ALL validated data first
+            instance = FoundItem.objects.create(
+                user=user,
+                **validated_data
+            )
+            
+            # ✅ FIX: Handle image separately after instance creation
+            if image_data:
+                logger.info(f"Processing uploaded image for found item: {image_data}")
+                if hasattr(image_data, 'file'):  # It's an uploaded file
+                    instance.item_image = image_data
+                    instance.save()  # Save again to update image
+            
+            # Handle image URL if provided
+            elif image_url:
+                logger.info(f"Processing image URL for found item: {image_url}")
+                try:
+                    image_name = f"found_item_{instance.id}.jpg"
+                    image_content = urlopen(image_url).read()
+                    instance.item_image.save(image_name, ContentFile(image_content), save=True)
+                except Exception as e:
+                    logger.warning(f"Failed to download image from URL: {e}")
+                    # Continue without image if URL fails
+
+            logger.info(f"Found item created successfully with ID: {instance.id}")
+            return instance
+            
+        except Exception as e:
+            logger.error(f"Error creating FoundItem instance: {str(e)}")
+            logger.error(f"Validated data: {validated_data}")
+            raise serializers.ValidationError(f"Failed to create found item: {str(e)}")
 ############################################################################################################################################################################################################
 class ClaimSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
@@ -604,6 +695,7 @@ class ImageSearchRequestSerializer(serializers.Serializer):
     image = serializers.ImageField()
     search_type = serializers.ChoiceField(choices=['lost', 'found', 'both'], default='both')
     max_results = serializers.IntegerField(default=10, min_value=1, max_value=50)
+
 
 
 
