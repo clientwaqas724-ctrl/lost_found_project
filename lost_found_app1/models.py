@@ -3,24 +3,15 @@ from django.contrib.auth.models import AbstractUser
 from django.core.validators import FileExtensionValidator
 import uuid
 from datetime import date
-from django.db import models
-from django.contrib.auth.models import AbstractUser
-from django.core.validators import FileExtensionValidator
-import uuid
-from datetime import date
 from django.utils.html import format_html
-##########################################################################################################################################################################################################
-# import numpy as np
+import re
 from io import BytesIO
 from PIL import Image
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 import os
 import hashlib
-# from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2, preprocess_input
-# from tensorflow.keras.preprocessing import image as keras_image
-# from tensorflow.keras.models import Model
-###############################################################################################################################################################################################################
+
 class User(AbstractUser):
     USER_TYPE_CHOICES = (
         ('resident', 'DHUAM Resident'),
@@ -48,6 +39,8 @@ class User(AbstractUser):
         # Handle remote URL for profile image if provided
         if isinstance(self.profile_image, str) and self.profile_image.startswith("http"):
             try:
+                import requests
+                from django.core.files.base import ContentFile
                 response = requests.get(self.profile_image)
                 if response.status_code == 200:
                     file_name = f"{uuid.uuid4()}.jpg"
@@ -83,16 +76,15 @@ class User(AbstractUser):
             )
         return "No Image"
     profile_image_preview.short_description = 'Profile Image'
-########################################################################################################################################################################################################
-#########################################################################################################################################################################################################
+
 class Category(models.Model):
     name = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    
     def __str__(self):
         return self.name
-######################################################################################################################################################################################################
-######################################################################################################################################################################################################
+
 class LostItem(models.Model):
     STATUS_CHOICES = (
         ('lost', 'Lost'),
@@ -163,8 +155,7 @@ class LostItem(models.Model):
     
     def get_material_tags_list(self):
         return [tag.strip() for tag in self.material_tags.split(',') if tag.strip()]
-#####################################################################################################################################################################################################
-####################################################333######################################################################################################################################################
+
 class FoundItem(models.Model):
     STATUS_CHOICES = (
         ('found', 'Found'),
@@ -243,8 +234,7 @@ class FoundItem(models.Model):
 
     def get_material_tags_list(self):
         return [tag.strip() for tag in self.material_tags.split(',') if tag.strip()]
-##########################################################################################################################################################################################################
-##########################################################################################################################################################################################################
+
 class Claim(models.Model):
     STATUS_CHOICES = (
         ('pending', 'Pending Review'),
@@ -282,8 +272,7 @@ class Claim(models.Model):
     
     def __str__(self):
         return f"Claim by {self.user.username} for {self.found_item.title}"
-#########################################################################################################################################################################################################
-######################################################################################################################################################################################################
+
 class Notification(models.Model):
     NOTIFICATION_TYPES = (
         ('claim_update', 'Claim Status Update'),
@@ -315,8 +304,6 @@ class Notification(models.Model):
     def __str__(self):
         return f"{self.notification_type} - {self.user.username}"
 
-############################################################################################################################################################################################################
-#####################################################################################################################################################################################################
 class ImageSearchLog(models.Model):
     """Manual image-based search logging"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -333,9 +320,8 @@ class ImageSearchLog(models.Model):
         ordering = ['-created_at']
     
     def __str__(self):
-
         return f"Image Search - {self.search_type} - {self.created_at.strftime('%Y-%m-%d %H:%M')}"
-#######################################################################################################################################################
+
 class ImageFeature(models.Model):
     """
     Stores image fingerprints for similarity search using custom algorithm
