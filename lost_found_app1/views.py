@@ -313,6 +313,7 @@ class LostItemViewSet(viewsets.ModelViewSet):
             qs = base_qs.filter(user=user)
             return qs.none() if not qs.exists() else qs
     ############################################################################################################
+    # views.py
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         try:
@@ -326,6 +327,17 @@ class LostItemViewSet(viewsets.ModelViewSet):
                     "data": serializer.data
                 },
                 status=status.HTTP_201_CREATED
+            )
+        except serializers.ValidationError as e:
+            # Handle validation errors specifically
+            logger.exception("Validation error creating Lost Item: %s", e)
+            return Response(
+                {
+                    "success": False,
+                    "message": "Validation error. Please check your input.",
+                    "error": e.detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
             logger.exception("Error creating Lost Item: %s", e)
@@ -982,6 +994,7 @@ def image_based_search(request):
         },
         'results': serializer.data
     }, status=status.HTTP_200_OK)
+
 
 
 
