@@ -9,7 +9,7 @@ from django.core.validators import FileExtensionValidator
 import uuid
 from datetime import date
 from django.utils.html import format_html
-######################################################################################################################################################
+##########################################################################################################################################################################################################
 import numpy as np
 from io import BytesIO
 from PIL import Image
@@ -18,7 +18,7 @@ from django.dispatch import receiver
 from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2, preprocess_input
 from tensorflow.keras.preprocessing import image as keras_image
 from tensorflow.keras.models import Model
-######################################################################################################################################################
+###############################################################################################################################################################################################################
 class User(AbstractUser):
     USER_TYPE_CHOICES = (
         ('resident', 'DHUAM Resident'),
@@ -81,8 +81,8 @@ class User(AbstractUser):
             )
         return "No Image"
     profile_image_preview.short_description = 'Profile Image'
-######################################################################################################################################################
-######################################################################################################################################################
+########################################################################################################################################################################################################
+#########################################################################################################################################################################################################
 class Category(models.Model):
     name = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True)
@@ -91,8 +91,8 @@ class Category(models.Model):
     def __str__(self):
         return self.name
 
-######################################################################################################################################################
-######################################################################################################################################################
+######################################################################################################################################################################################################
+######################################################################################################################################################################################################
 class LostItem(models.Model):
     STATUS_CHOICES = (
         ('lost', 'Lost'),
@@ -106,7 +106,7 @@ class LostItem(models.Model):
     description = models.TextField()
     category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True, blank=True)
     
-    # Manual image search fields
+    # Tags
     search_tags = models.TextField(blank=True, help_text="Comma-separated tags for manual image searching")
     color_tags = models.CharField(max_length=200, blank=True, help_text="Comma-separated color descriptions")
     material_tags = models.CharField(max_length=200, blank=True, help_text="Comma-separated material descriptions")
@@ -120,9 +120,11 @@ class LostItem(models.Model):
     brand = models.CharField(max_length=100, blank=True)
     color = models.CharField(max_length=50, blank=True)
     size = models.CharField(max_length=50, blank=True, help_text="Size/dimensions of the item")
-    # Image handling
+
+    # Image
     item_image = models.ImageField(upload_to='lost_items/', blank=True, null=True)    
-    # Status and tracking
+
+    # Status & Verification
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='lost')
     is_verified = models.BooleanField(default=False)
     
@@ -135,9 +137,8 @@ class LostItem(models.Model):
     
     def __str__(self):
         return f"{self.title} - {self.get_status_display()}"
-    
+
     def save(self, *args, **kwargs):
-        # Generate search tags automatically if not provided
         if not self.search_tags and self.title:
             base_tags = [self.title.lower()]
             if self.brand:
@@ -147,24 +148,19 @@ class LostItem(models.Model):
                 self.color_tags = self.color
             if self.category:
                 base_tags.append(self.category.name.lower())
-            
             self.search_tags = ", ".join(base_tags)
-        
         super().save(*args, **kwargs)
     
     def get_search_tags_list(self):
-        """Return search tags as list"""
         return [tag.strip() for tag in self.search_tags.split(',') if tag.strip()]
     
     def get_color_tags_list(self):
-        """Return color tags as list"""
         return [tag.strip() for tag in self.color_tags.split(',') if tag.strip()]
     
     def get_material_tags_list(self):
-        """Return material tags as list"""
         return [tag.strip() for tag in self.material_tags.split(',') if tag.strip()]
-######################################################################################################################################################
-######################################################################################################################################################
+#####################################################################################################################################################################################################
+####################################################333######################################################################################################################################################
 class FoundItem(models.Model):
     STATUS_CHOICES = (
         ('found', 'Found'),
@@ -243,8 +239,8 @@ class FoundItem(models.Model):
 
     def get_material_tags_list(self):
         return [tag.strip() for tag in self.material_tags.split(',') if tag.strip()]
-######################################################################################################################################################
-######################################################################################################################################################
+##########################################################################################################################################################################################################
+##########################################################################################################################################################################################################
 class Claim(models.Model):
     STATUS_CHOICES = (
         ('pending', 'Pending Review'),
@@ -282,8 +278,8 @@ class Claim(models.Model):
     
     def __str__(self):
         return f"Claim by {self.user.username} for {self.found_item.title}"
-######################################################################################################################################################
-######################################################################################################################################################
+#########################################################################################################################################################################################################
+######################################################################################################################################################################################################
 class Notification(models.Model):
     NOTIFICATION_TYPES = (
         ('claim_update', 'Claim Status Update'),
@@ -315,8 +311,8 @@ class Notification(models.Model):
     def __str__(self):
         return f"{self.notification_type} - {self.user.username}"
 
-######################################################################################################################################################
-######################################################################################################################################################
+############################################################################################################################################################################################################
+#####################################################################################################################################################################################################
 class ImageSearchLog(models.Model):
     """Manual image-based search logging"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -395,5 +391,6 @@ def create_found_item_embedding(sender, instance, **kwargs):
                 item_id=instance.id,
                 defaults={'embedding': emb}
             )
+
 
 
