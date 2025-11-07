@@ -325,6 +325,12 @@ class LostItemSerializer(serializers.ModelSerializer):
     user_id = serializers.IntegerField(source='user.id', read_only=True)
     category_name = serializers.CharField(source='category.name', read_only=True)
     item_image = serializers.ImageField(required=False, allow_null=True)
+    
+    # ✅ FIX: Make category field required and ensure it validates existence
+    category = serializers.PrimaryKeyRelatedField(
+        queryset=Category.objects.all(),
+        required=True
+    )
 
     search_tags_list = serializers.SerializerMethodField()
     color_tags_list = serializers.SerializerMethodField()
@@ -350,10 +356,28 @@ class LostItemSerializer(serializers.ModelSerializer):
     def get_material_tags_list(self, obj):
         return obj.get_material_tags_list()
 
+    def validate_category(self, value):
+        """
+        ✅ Additional validation to ensure category exists
+        """
+        if not Category.objects.filter(id=value.id).exists():
+            raise serializers.ValidationError("Category does not exist.")
+        return value
+
     def create(self, validated_data):
         request = self.context.get('request')
         user = request.user
         image_data = validated_data.pop('item_image', None)
+        
+        # ✅ FIX: Extract category properly and ensure it exists
+        category = validated_data.get('category')
+        if not category:
+            raise serializers.ValidationError({"category": "This field is required."})
+            
+        # Double-check category exists
+        if not Category.objects.filter(id=category.id).exists():
+            raise serializers.ValidationError({"category": "Selected category does not exist."})
+
         instance = LostItem(**validated_data)
         instance.user = user
 
@@ -509,6 +533,7 @@ class ImageFeatureSerializer(serializers.ModelSerializer):
     class Meta:
         model = ImageFeature
         fields = ['id', 'item_type', 'item_id', 'created_at']
+
 
 
 
