@@ -308,144 +308,59 @@ class CategoryViewSet(viewsets.ModelViewSet):
 ###################################################################################################################################################################################################
 ##############################################################################################################################################################################################
 class LostItemViewSet(viewsets.ModelViewSet):
-    """
-    Lost item management.
-    - Admin can view all items.
-    - Resident sees only their own.
-    - Returns success message on create.
-    """
     serializer_class = LostItemSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         user = self.request.user
-        base_qs = LostItem.objects.select_related('user', 'category').order_by('-created_at')
+        qs = LostItem.objects.select_related('user', 'category').order_by('-created_at')
         if user.user_type == 'admin':
-            return base_qs
-        return base_qs.filter(user=user)
+            return qs
+        return qs.filter(user=user)
+
+    def get_serializer_context(self):
+        """✅ Ensure serializer always gets request context"""
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
 
     def create(self, request, *args, **kwargs):
-        try:
-            logger.info("=== START LOST ITEM CREATION ===")
-            logger.info(f"User: {request.user.username} (ID: {request.user.id})")
-            logger.info(f"User type: {request.user.user_type}")
-            logger.info(f"Request data: {request.data}")
-            logger.info(f"FILES: {request.FILES}")
+        logger.info("LostItemViewSet.create() called")
 
-            if not request.user.is_authenticated:
-                return Response(
-                    {"success": False, "message": "User not authenticated."},
-                    status=status.HTTP_401_UNAUTHORIZED,
-                )
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        item = serializer.save()  # user auto-handled by serializer now
 
-            serializer = self.get_serializer(data=request.data)
-            if not serializer.is_valid():
-                logger.warning(f"Validation errors: {serializer.errors}")
-                return Response(
-                    {
-                        "success": False,
-                        "message": "Please fix the validation errors.",
-                        "errors": serializer.errors,
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            # ✅ Save item with the current user (no duplicate user issue now)
-            lost_item = serializer.save(user=request.user)
-            response_serializer = self.get_serializer(lost_item)
-
-            logger.info("=== END LOST ITEM CREATION SUCCESS ===")
-            return Response(
-                {
-                    "success": True,
-                    "message": "Lost item added successfully!",
-                    "data": response_serializer.data,
-                },
-                status=status.HTTP_201_CREATED,
-            )
-
-        except Exception as e:
-            logger.error(f"Error creating lost item: {str(e)}")
-            logger.error(traceback.format_exc())
-            return Response(
-                {
-                    "success": False,
-                    "message": "Something went wrong while adding the lost item.",
-                    "error": str(e),
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        return Response({
+            "success": True,
+            "message": "Lost item added successfully!",
+            "data": self.get_serializer(item).data
+        }, status=status.HTTP_201_CREATED)
 
     def list(self, request, *args, **kwargs):
-        """Consistent, clean list response for admin and residents"""
-        try:
-            queryset = self.filter_queryset(self.get_queryset())
-            logger.info(f"Listing lost items for user: {request.user.username}")
-            total_items = queryset.count()
-            logger.info(f"Total items found: {total_items}")
-
-            page = self.paginate_queryset(queryset)
-            if page is not None:
-                serializer = self.get_serializer(page, many=True)
-                return self.get_paginated_response(serializer.data)
-
-            serializer = self.get_serializer(queryset, many=True)
-            return Response(
-                {
-                    "success": True,
-                    "message": "Lost items retrieved successfully.",
-                    "count": total_items,
-                    "data": serializer.data,
-                },
-                status=status.HTTP_200_OK,
-            )
-
-        except Exception as e:
-            logger.error(f"Error retrieving lost items: {str(e)}")
-            logger.error(traceback.format_exc())
-            return Response(
-                {
-                    "success": False,
-                    "message": "Failed to load lost items.",
-                    "error": str(e),
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+        """✅ Show lost items (Admin=All, Resident=Own)"""
+        queryset = self.get_queryset()
+        page = self.paginate_queryset(queryset)
+        serializer = self.get_serializer(page or queryset, many=True)
+        if page:
+            return self.get_paginated_response(serializer.data)
+        return Response({
+            "success": True,
+            "count": queryset.count(),
+            "data": serializer.data
+        })
 
     @action(detail=False, methods=['get'])
     def my_lost_items(self, request):
-        """Resident: show only their own lost items. Admin: show all."""
-        try:
-            user = request.user
-            logger.info(f"My lost items requested by: {user.username}")
-
-            if user.user_type == 'admin':
-                items = LostItem.objects.all().order_by('-created_at')
-            else:
-                items = LostItem.objects.filter(user=user).order_by('-created_at')
-
-            serializer = self.get_serializer(items, many=True)
-            return Response(
-                {
-                    "success": True,
-                    "message": "Lost items retrieved successfully.",
-                    "count": items.count(),
-                    "data": serializer.data,
-                },
-                status=status.HTTP_200_OK,
-            )
-
-        except Exception as e:
-            logger.error(f"Error in my_lost_items: {str(e)}")
-            logger.error(traceback.format_exc())
-            return Response(
-                {
-                    "success": False,
-                    "message": "Failed to load lost items.",
-                    "error": str(e),
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+        user = request.user
+        items = LostItem.objects.filter(user=user).order_by('-created_at')
+        serializer = self.get_serializer(items, many=True)
+        return Response({
+            "success": True,
+            "message": "My lost items retrieved successfully.",
+            "count": items.count(),
+            "data": serializer.data
+        })
 #######################################################################################################################################################################################################
 ###################################################################################################################################################################################################
 class FoundItemViewSet(viewsets.ModelViewSet):
@@ -1229,6 +1144,7 @@ def regenerate_image_features(request, item_type, item_id):
             {"error": "Failed to generate image features"}, 
             status=status.HTTP_400_BAD_REQUEST
         )
+
 
 
 
