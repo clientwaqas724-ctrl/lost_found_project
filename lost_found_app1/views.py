@@ -314,11 +314,13 @@ class LostItemViewSet(viewsets.ModelViewSet):
             return qs.none() if not qs.exists() else qs
 
     def create(self, request, *args, **kwargs):
-        """
-        Custom create with success message.
-        """
         serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return Response(
+                {"success": False, "errors": serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
         serializer.save(user=request.user)
         return Response(
             {
@@ -328,7 +330,7 @@ class LostItemViewSet(viewsets.ModelViewSet):
             },
             status=status.HTTP_201_CREATED
         )
-
+        
     @action(detail=False, methods=['get'])
     def my_lost_items(self, request):
         """
@@ -973,6 +975,7 @@ def image_based_search(request):
         },
         'results': serializer.data
     }, status=status.HTTP_200_OK)
+
 
 
 
