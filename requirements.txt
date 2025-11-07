@@ -11,4 +11,5 @@ dj-database-url>=2.1
 python-dotenv>=1.0
 qrcode>=7.4.2
 python-decouple>=3.8
+numpy
 
