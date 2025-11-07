@@ -265,9 +265,8 @@ class UpdatePasswordSerializer(serializers.Serializer):
         user.set_password(self.validated_data['new_password'])
         user.save()
         return user
-#####################################################################################
-
-#################(new forget the password update code)#################
+#####################################################################################################################################################################################################
+############################################################################(new forget the password update code)##################################################################################
 class ForgotPasswordSerializer(serializers.Serializer):
     """Serializer for resetting password using email only."""
     email = serializers.EmailField(required=True)
@@ -295,9 +294,8 @@ class ForgotPasswordSerializer(serializers.Serializer):
         user.set_password(self.validated_data['new_password'])
         user.save()
         return user
-################################################################################################################
-
-#########################################################################
+##############################################################################################################################################################################################################
+##################################################################################################################################################################################################################
 class UserListSerializer(serializers.ModelSerializer):
     """
     Serializer for listing users (limited fields for privacy)
@@ -310,9 +308,9 @@ class UserListSerializer(serializers.ModelSerializer):
             'profile_image', 'date_joined', 'is_active'
         )
         read_only_fields = fields
-#################################################################################################################################################
-#################################################################################################################################################
-#################################################################################################################################################
+#########################################################################################################################################################################################################
+########################################################################################################################################################################################################
+##########################################################################################################################################################################################################
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = Category
@@ -355,7 +353,7 @@ class LostItemSerializer(serializers.ModelSerializer):
 
     def validate_category(self, value):
         """Convert category name or ID to Category object"""
-        if not value:  # Allow empty category
+        if not value or value == '':  # Allow empty category
             return None
             
         try:
@@ -367,16 +365,28 @@ class LostItemSerializer(serializers.ModelSerializer):
                 category = Category.objects.get(name__iexact=value.strip())
             return category
         except Category.DoesNotExist:
-            raise serializers.ValidationError(f"Category '{value}' does not exist. Please select a valid category.")
-        except (ValueError, AttributeError):
+            raise serializers.ValidationError(f"Category '{value}' does not exist. Please select a valid category or leave empty.")
+        except (ValueError, AttributeError) as e:
+            logger.error(f"Category validation error: {e}")
             raise serializers.ValidationError("Invalid category format. Use category ID or name.")
 
     def validate(self, data):
         """Additional validation for required fields"""
-        required_fields = ['title', 'description', 'lost_location', 'lost_date']
-        for field in required_fields:
+        errors = {}
+        
+        required_fields = {
+            'title': 'Title is required.',
+            'description': 'Description is required.', 
+            'lost_location': 'Lost location is required.',
+            'lost_date': 'Lost date is required.'
+        }
+        
+        for field, message in required_fields.items():
             if not data.get(field):
-                raise serializers.ValidationError({field: f"This field is required."})
+                errors[field] = message
+        
+        if errors:
+            raise serializers.ValidationError(errors)
         
         return data
 
@@ -388,20 +398,45 @@ class LostItemSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         request = self.context.get('request')
+        if not request:
+            raise serializers.ValidationError("Request context is missing")
+            
         user = request.user
+        logger.info(f"Creating lost item for user: {user.username}")
+        
+        # Extract image data before creating instance
         image_data = validated_data.pop('item_image', None)
         
-        # Create the instance
-        instance = LostItem(**validated_data)
-        instance.user = user
+        try:
+            # ✅ FIX: Create the instance with ALL validated data first
+            instance = LostItem.objects.create(
+                user=user,
+                **validated_data
+            )
+            
+            # ✅ FIX: Handle image separately after instance creation
+            if image_data:
+                logger.info(f"Processing image for lost item: {image_data}")
+                if hasattr(image_data, 'file'):  # It's an uploaded file
+                    instance.item_image = image_data
+                    instance.save()  # Save again to update image
+                elif isinstance(image_data, str) and image_data.startswith('http'):
+                    # Handle URL images if needed
+                    try:
+                        image_name = f"lost_item_{instance.id}.jpg"
+                        image_content = urlopen(image_data).read()
+                        instance.item_image.save(image_name, ContentFile(image_content), save=True)
+                    except Exception as e:
+                        logger.warning(f"Failed to download image from URL: {e}")
+                        # Continue without image if URL fails
 
-        # Handle image - only if provided and not a URL (simplified)
-        if image_data and hasattr(image_data, 'file'):  # It's an uploaded file
-            instance.item_image = image_data
-        # Skip URL image handling for now to simplify
-
-        instance.save()
-        return instance
+            logger.info(f"Lost item created successfully with ID: {instance.id}")
+            return instance
+            
+        except Exception as e:
+            logger.error(f"Error creating LostItem instance: {str(e)}")
+            logger.error(f"Validated data: {validated_data}")
+            raise serializers.ValidationError(f"Failed to create lost item: {str(e)}")
 #########################################################################################################################################################################################################
 class FoundItemSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
@@ -541,6 +576,7 @@ class ImageFeatureSerializer(serializers.ModelSerializer):
     class Meta:
         model = ImageFeature
         fields = ['id', 'item_type', 'item_id', 'created_at']
+
 
 
 
