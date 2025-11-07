@@ -269,65 +269,83 @@ def get_all_users(request):
 #################################################################################################################################################
 #################################################################################################################################################
 #####################################################################################
-#Category ViewSet
+# ===========================================
+# CATEGORY VIEWSET
+# ===========================================
 class CategoryViewSet(viewsets.ModelViewSet):
-    queryset = Category.objects.all()
+    """
+    Category management viewset.
+    - All authenticated users can list/retrieve categories.
+    - Only admins can create/update/delete.
+    """
+    queryset = Category.objects.all().order_by('id')  # ✅ Fix UnorderedObjectListWarning
     serializer_class = CategorySerializer
 
     def get_permissions(self):
-        """
-        Allow all authenticated users to view categories (list/retrieve),
-        but only admins can create, update, or delete categories.
-        """
         if self.action in ['list', 'retrieve']:
-            permission_classes = [IsAuthenticated]  # all logged-in users can view
+            permission_classes = [IsAuthenticated]
         else:
-            permission_classes = [IsAuthenticated, IsAdminOnly]  # only admins can modify
+            permission_classes = [IsAuthenticated, IsAdminOnly]
         return [permission() for permission in permission_classes]
 ###################################################################################################################################################################################################
 ##############################################################################################################################################################################################
 class LostItemViewSet(viewsets.ModelViewSet):
+    """
+    Lost item management.
+    - Admin can view all items.
+    - Resident sees only their own.
+    - Returns success message on create.
+    - Returns message if user has no lost items.
+    """
     serializer_class = LostItemSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        """
-        - Admin: can see all lost items.
-        - Resident: can see only their own items.
-        """
         user = self.request.user
+
+        # ✅ Use select_related to reduce DB hits (performance)
+        base_qs = LostItem.objects.select_related('user', 'category').order_by('-created_at')
+
         if user.user_type == 'admin':
-            return LostItem.objects.all()
+            return base_qs
         else:
-            # Resident only sees their own added items
-            return LostItem.objects.filter(user=user)
+            # ✅ Resident: show only own lost items (if any)
+            qs = base_qs.filter(user=user)
+            return qs.none() if not qs.exists() else qs
 
     def create(self, request, *args, **kwargs):
         """
-        Override create() to return custom success message.
+        Custom create with success message.
         """
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save(user=request.user)
         return Response(
-            {"message": "Lost item added successfully.", "data": serializer.data},
+            {
+                "success": True,
+                "message": "Lost item added successfully.",
+                "data": serializer.data
+            },
             status=status.HTTP_201_CREATED
         )
 
     @action(detail=False, methods=['get'])
     def my_lost_items(self, request):
         """
-        Resident sees only their own lost items.
-        Admin sees all.
+        Resident: show only own lost items.
+        Admin: show all.
         """
         user = request.user
         if user.user_type == 'admin':
-            items = LostItem.objects.all()
+            items = LostItem.objects.all().order_by('-created_at')
         else:
-            items = LostItem.objects.filter(user=user)
-        
+            items = LostItem.objects.filter(user=user).order_by('-created_at')
+
         if not items.exists():
-            return Response({"detail": "No lost items found for this user."}, status=status.HTTP_200_OK)
+            return Response(
+                {"detail": "No lost items found for this user."},
+                status=status.HTTP_200_OK
+            )
 
         serializer = self.get_serializer(items, many=True)
         return Response(serializer.data)
@@ -335,7 +353,7 @@ class LostItemViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def mark_found(self, request, pk=None):
         """
-        Mark a lost item as found (allowed for item owner or admin).
+        Mark item as found — allowed for owner or admin.
         """
         item = self.get_object()
         if item.user != request.user and request.user.user_type != 'admin':
@@ -955,6 +973,7 @@ def image_based_search(request):
         },
         'results': serializer.data
     }, status=status.HTTP_200_OK)
+
 
 
 
