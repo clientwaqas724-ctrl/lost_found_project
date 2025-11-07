@@ -50,6 +50,13 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+# ✅ Import your models and serializers
+from lost_found_app1.models import LostItem, FoundItem, Category, ImageSearchLog
+from lost_found_app1.serializers import (
+    LostItemSerializer,
+    FoundItemSerializer,
+    ManualImageSearchSerializer,
+)
 ##############################################################################################################################################################
 ################################################################################################################################
 from .models import (
@@ -634,13 +641,13 @@ class NotificationViewSet(viewsets.ModelViewSet):
 @permission_classes([IsAuthenticated])
 def manual_image_search(request):
     """
-    Smart Manual Image Search API (Final Fixed)
-    ------------------------------------------------
-    ✅ Works for Lost, Found, or Both
-    ✅ Supports text, color & category filters
-    ✅ Properly returns visible item data
-    ✅ Handles missing or invalid categories
-    ✅ Never fails silently — always returns JSON
+    Smart Manual Image Search API
+    ----------------------------------------------------
+    ✅ Unified Lost + Found search
+    ✅ Works with category, color & keyword filters
+    ✅ Returns valid serialized results
+    ✅ Handles missing or invalid categories gracefully
+    ✅ Logs every search for analytics
     """
     start_time = time.time()
 
@@ -656,7 +663,7 @@ def manual_image_search(request):
         category_filters = (data.get('category_filters') or '').strip()
         max_results = data.get('max_results', 50)
 
-        # Split filters and search terms
+        # Clean & split inputs
         search_terms = [t.strip().lower() for t in re.split(r'[, ]+', search_query) if t.strip()]
         color_terms = [c.strip().lower() for c in re.split(r'[, ]+', color_filters) if c.strip()]
         category_terms = [c.strip().lower() for c in re.split(r'[, ]+', category_filters) if c.strip()]
@@ -664,9 +671,9 @@ def manual_image_search(request):
         matched_category = None
         message = "Results found successfully."
 
-        # -------------------------------------------------------------------
+        # ---------------------------------------------------------------
         # CATEGORY VALIDATION
-        # -------------------------------------------------------------------
+        # ---------------------------------------------------------------
         if category_filters and category_filters.lower() != 'all':
             matched_category = Category.objects.filter(name__iexact=category_filters).first()
             if not matched_category:
@@ -677,12 +684,13 @@ def manual_image_search(request):
                     "search_metadata": {"results_count": 0}
                 }, status=status.HTTP_200_OK)
 
-        # -------------------------------------------------------------------
-        # QUERY BUILDER FUNCTION
-        # -------------------------------------------------------------------
-        def build_query(model_queryset, is_lost=True):
+        # ---------------------------------------------------------------
+        # QUERY BUILDER (Reusable for Lost/Found)
+        # ---------------------------------------------------------------
+        def build_query(model_qs, is_lost=True):
             q = Q()
-            # Match search terms (title, description, tags, etc.)
+
+            # General search terms
             for term in search_terms:
                 q |= (
                     Q(title__icontains=term)
@@ -695,18 +703,20 @@ def manual_image_search(request):
                     | Q(size__icontains=term)
                     | Q(category__name__icontains=term)
                 )
-                # Location fields differ between models
+                # Include location field based on model
                 if is_lost:
                     q |= Q(lost_location__icontains=term)
                 else:
                     q |= Q(found_location__icontains=term)
 
+            # Color filters
             if color_terms:
-                cq = Q()
+                color_q = Q()
                 for c in color_terms:
-                    cq |= Q(color__icontains=c) | Q(color_tags__icontains=c)
-                q &= cq
+                    color_q |= Q(color__icontains=c) | Q(color_tags__icontains=c)
+                q &= color_q
 
+            # Category filters
             if matched_category:
                 q &= Q(category=matched_category)
             elif category_terms:
@@ -715,31 +725,31 @@ def manual_image_search(request):
                     cat_q |= Q(category__name__iexact=cat)
                 q &= cat_q
 
-            return model_queryset.filter(q).distinct()
+            return model_qs.filter(q).distinct()
 
-        # -------------------------------------------------------------------
-        # RUN SEARCHES
-        # -------------------------------------------------------------------
+        # ---------------------------------------------------------------
+        # PERFORM SEARCH
+        # ---------------------------------------------------------------
         lost_qs, found_qs = LostItem.objects.none(), FoundItem.objects.none()
 
         if search_type == 'lost':
             lost_qs = build_query(LostItem.objects.all(), is_lost=True)
         elif search_type == 'found':
             found_qs = build_query(FoundItem.objects.all(), is_lost=False)
-        else:
+        else:  # 'all'
             lost_qs = build_query(LostItem.objects.all(), is_lost=True)
             found_qs = build_query(FoundItem.objects.all(), is_lost=False)
 
-        # -------------------------------------------------------------------
-        # MERGE & SORT RESULTS
-        # -------------------------------------------------------------------
+        # ---------------------------------------------------------------
+        # COMBINE & SORT RESULTS
+        # ---------------------------------------------------------------
         results = list(lost_qs[:max_results]) + list(found_qs[:max_results])
         results = sorted(results, key=lambda x: getattr(x, "created_at", 0), reverse=True)
         results = results[:max_results]
 
-        # -------------------------------------------------------------------
+        # ---------------------------------------------------------------
         # SERIALIZE RESULTS
-        # -------------------------------------------------------------------
+        # ---------------------------------------------------------------
         lost_data = LostItemSerializer(
             [r for r in results if isinstance(r, LostItem)],
             many=True, context={'request': request}
@@ -753,9 +763,9 @@ def manual_image_search(request):
         results_data = lost_data + found_data
         search_duration = round(time.time() - start_time, 3)
 
-        # -------------------------------------------------------------------
-        # LOG SEARCH
-        # -------------------------------------------------------------------
+        # ---------------------------------------------------------------
+        # SAVE SEARCH LOG
+        # ---------------------------------------------------------------
         ImageSearchLog.objects.create(
             user=request.user,
             search_type=search_type,
@@ -766,9 +776,9 @@ def manual_image_search(request):
             search_duration=search_duration
         )
 
-        # -------------------------------------------------------------------
-        # RETURN RESPONSE
-        # -------------------------------------------------------------------
+        # ---------------------------------------------------------------
+        # FINAL RESPONSE
+        # ---------------------------------------------------------------
         return Response({
             "count": len(results_data),
             "results": results_data,
@@ -1140,6 +1150,7 @@ def regenerate_image_features(request, item_type, item_id):
             {"error": "Failed to generate image features"}, 
             status=status.HTTP_400_BAD_REQUEST
         )
+
 
 
 
