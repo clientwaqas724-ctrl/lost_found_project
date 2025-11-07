@@ -322,12 +322,13 @@ class CategorySerializer(serializers.ModelSerializer):
 #########################################################################################################################################################################################################
 class LostItemSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
-    user_id = serializers.IntegerField(source='user.id', read_only=True)  # ✅ Added user ID
+    user_id = serializers.IntegerField(source='user.id', read_only=True)
     category_name = serializers.CharField(source='category.name', read_only=True)
+    item_image = serializers.ImageField(required=False, allow_null=True)
+
     search_tags_list = serializers.SerializerMethodField()
     color_tags_list = serializers.SerializerMethodField()
     material_tags_list = serializers.SerializerMethodField()
-    item_image = serializers.CharField(required=False, allow_blank=True, allow_null=True)  # accept URL or base64
 
     class Meta:
         model = LostItem
@@ -356,14 +357,16 @@ class LostItemSerializer(serializers.ModelSerializer):
         instance = LostItem(**validated_data)
         instance.user = user
 
-        # ✅ Handle image URL upload
-        if image_data and isinstance(image_data, str) and image_data.startswith("http"):
+        # Handle image (multipart or URL)
+        if isinstance(image_data, str) and image_data.startswith("http"):
             try:
                 image_name = os.path.basename(urlparse(image_data).path)
                 image_content = urlopen(image_data).read()
                 instance.item_image.save(image_name, ContentFile(image_content), save=False)
             except Exception as e:
-                raise serializers.ValidationError({"item_image": f"Invalid image URL or download failed: {e}"})
+                raise serializers.ValidationError({"item_image": f"Invalid image URL: {e}"})
+        elif image_data:
+            instance.item_image = image_data
 
         instance.save()
         return instance
@@ -506,6 +509,7 @@ class ImageFeatureSerializer(serializers.ModelSerializer):
     class Meta:
         model = ImageFeature
         fields = ['id', 'item_type', 'item_id', 'created_at']
+
 
 
 
