@@ -40,6 +40,7 @@ from rest_framework.response import Response
 from django.contrib.auth import get_user_model
 logger = logging.getLogger(__name__)
 User = get_user_model()
+from .models import *
 #####################################################################################
 # Remove the problematic import and use these instead:
 from .models import ImageFeature, generate_image_fingerprint, find_similar_images, LostItem, FoundItem
@@ -633,12 +634,13 @@ class NotificationViewSet(viewsets.ModelViewSet):
 @permission_classes([IsAuthenticated])
 def manual_image_search(request):
     """
-    AI-like Smart Image Search API (Fixed)
-    --------------------------------------
-    ✅ Always returns valid JSON
-    ✅ Strict category + type validation
-    ✅ Safe serializer validation
-    ✅ Handles all combinations cleanly
+    Smart Manual Image Search API (Final Fixed)
+    ------------------------------------------------
+    ✅ Works for Lost, Found, or Both
+    ✅ Supports text, color & category filters
+    ✅ Properly returns visible item data
+    ✅ Handles missing or invalid categories
+    ✅ Never fails silently — always returns JSON
     """
     start_time = time.time()
 
@@ -654,19 +656,19 @@ def manual_image_search(request):
         category_filters = (data.get('category_filters') or '').strip()
         max_results = data.get('max_results', 50)
 
-        # Clean token lists
+        # Split filters and search terms
         search_terms = [t.strip().lower() for t in re.split(r'[, ]+', search_query) if t.strip()]
         color_terms = [c.strip().lower() for c in re.split(r'[, ]+', color_filters) if c.strip()]
         category_terms = [c.strip().lower() for c in re.split(r'[, ]+', category_filters) if c.strip()]
 
-        LostModel, FoundModel, CategoryModel = LostItem, FoundItem, Category
-        lost_qs, found_qs = LostModel.objects.none(), FoundModel.objects.none()
         matched_category = None
         message = "Results found successfully."
 
-        # ---------------------- CATEGORY VALIDATION ----------------------
+        # -------------------------------------------------------------------
+        # CATEGORY VALIDATION
+        # -------------------------------------------------------------------
         if category_filters and category_filters.lower() != 'all':
-            matched_category = CategoryModel.objects.filter(name__iexact=category_filters).first()
+            matched_category = Category.objects.filter(name__iexact=category_filters).first()
             if not matched_category:
                 return Response({
                     "count": 0,
@@ -675,93 +677,85 @@ def manual_image_search(request):
                     "search_metadata": {"results_count": 0}
                 }, status=status.HTTP_200_OK)
 
-            # Check existence under this category
-            has_lost = LostModel.objects.filter(category=matched_category).exists()
-            has_found = FoundModel.objects.filter(category=matched_category).exists()
-
-            if search_type == 'lost' and not has_lost:
-                return Response({
-                    "count": 0,
-                    "results": [],
-                    "message": f"No Lost items in '{matched_category.name}'.",
-                    "search_metadata": {"results_count": 0}
-                })
-
-            if search_type == 'found' and not has_found:
-                return Response({
-                    "count": 0,
-                    "results": [],
-                    "message": f"No Found items in '{matched_category.name}'.",
-                    "search_metadata": {"results_count": 0}
-                })
-
-        # ---------------------- SEARCH LOGIC ----------------------
-        if search_type not in ['lost', 'found', 'all']:
-            search_type = 'all'
-
-        def build_query(base_qs):
-            """Build flexible Q objects for query search."""
-            if search_terms:
-                q = Q()
-                for term in search_terms:
-                    q |= (
-                        Q(title__icontains=term)
-                        | Q(description__icontains=term)
-                        | Q(search_tags__icontains=term)
-                        | Q(color_tags__icontains=term)
-                        | Q(material_tags__icontains=term)
-                        | Q(brand__icontains=term)
-                        | Q(color__icontains=term)
-                        | Q(size__icontains=term)
-                        | Q(category__name__icontains=term)
-                        | Q(lost_location__icontains=term)
-                    )
-                base_qs = base_qs.filter(q)
+        # -------------------------------------------------------------------
+        # QUERY BUILDER FUNCTION
+        # -------------------------------------------------------------------
+        def build_query(model_queryset, is_lost=True):
+            q = Q()
+            # Match search terms (title, description, tags, etc.)
+            for term in search_terms:
+                q |= (
+                    Q(title__icontains=term)
+                    | Q(description__icontains=term)
+                    | Q(search_tags__icontains=term)
+                    | Q(color_tags__icontains=term)
+                    | Q(material_tags__icontains=term)
+                    | Q(brand__icontains=term)
+                    | Q(color__icontains=term)
+                    | Q(size__icontains=term)
+                    | Q(category__name__icontains=term)
+                )
+                # Location fields differ between models
+                if is_lost:
+                    q |= Q(lost_location__icontains=term)
+                else:
+                    q |= Q(found_location__icontains=term)
 
             if color_terms:
                 cq = Q()
                 for c in color_terms:
-                    cq |= Q(color_tags__icontains=c) | Q(color__icontains=c)
-                base_qs = base_qs.filter(cq)
+                    cq |= Q(color__icontains=c) | Q(color_tags__icontains=c)
+                q &= cq
 
             if matched_category:
-                base_qs = base_qs.filter(category=matched_category)
+                q &= Q(category=matched_category)
             elif category_terms:
                 cat_q = Q()
                 for cat in category_terms:
                     cat_q |= Q(category__name__iexact=cat)
-                base_qs = base_qs.filter(cat_q)
+                q &= cat_q
 
-            return base_qs.distinct()
+            return model_queryset.filter(q).distinct()
+
+        # -------------------------------------------------------------------
+        # RUN SEARCHES
+        # -------------------------------------------------------------------
+        lost_qs, found_qs = LostItem.objects.none(), FoundItem.objects.none()
 
         if search_type == 'lost':
-            lost_qs = build_query(LostModel.objects.all())
+            lost_qs = build_query(LostItem.objects.all(), is_lost=True)
         elif search_type == 'found':
-            found_qs = build_query(FoundModel.objects.all())
-        else:  # all
-            lost_qs = build_query(LostModel.objects.all())
-            found_qs = build_query(FoundModel.objects.all())
+            found_qs = build_query(FoundItem.objects.all(), is_lost=False)
+        else:
+            lost_qs = build_query(LostItem.objects.all(), is_lost=True)
+            found_qs = build_query(FoundItem.objects.all(), is_lost=False)
 
-        # Combine & limit
+        # -------------------------------------------------------------------
+        # MERGE & SORT RESULTS
+        # -------------------------------------------------------------------
         results = list(lost_qs[:max_results]) + list(found_qs[:max_results])
         results = sorted(results, key=lambda x: getattr(x, "created_at", 0), reverse=True)
         results = results[:max_results]
 
-        # Serialize
+        # -------------------------------------------------------------------
+        # SERIALIZE RESULTS
+        # -------------------------------------------------------------------
         lost_data = LostItemSerializer(
-            [r for r in results if isinstance(r, LostModel)],
+            [r for r in results if isinstance(r, LostItem)],
             many=True, context={'request': request}
         ).data
 
         found_data = FoundItemSerializer(
-            [r for r in results if isinstance(r, FoundModel)],
+            [r for r in results if isinstance(r, FoundItem)],
             many=True, context={'request': request}
         ).data
 
         results_data = lost_data + found_data
         search_duration = round(time.time() - start_time, 3)
 
-        # Save log
+        # -------------------------------------------------------------------
+        # LOG SEARCH
+        # -------------------------------------------------------------------
         ImageSearchLog.objects.create(
             user=request.user,
             search_type=search_type,
@@ -772,6 +766,9 @@ def manual_image_search(request):
             search_duration=search_duration
         )
 
+        # -------------------------------------------------------------------
+        # RETURN RESPONSE
+        # -------------------------------------------------------------------
         return Response({
             "count": len(results_data),
             "results": results_data,
@@ -791,7 +788,6 @@ def manual_image_search(request):
         }, status=status.HTTP_200_OK)
 
     except Exception as e:
-        # Ensure JSON-safe error
         return Response({
             "error": str(e),
             "message": "An unexpected error occurred during search."
@@ -1144,6 +1140,7 @@ def regenerate_image_features(request, item_type, item_id):
             {"error": "Failed to generate image features"}, 
             status=status.HTTP_400_BAD_REQUEST
         )
+
 
 
 
