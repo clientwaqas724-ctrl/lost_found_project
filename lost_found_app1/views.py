@@ -59,8 +59,8 @@ from .models import (
 ################################################################################################################################
 from .serializers import *
 #####################################################################################
-from .models import ImageFeature, generate_image_embedding, LostItem, FoundItem ####========> new updated
-import numpy as np  ##############==> new updated==>
+# from .models import ImageFeature, generate_image_embedding, LostItem, FoundItem ####========> new updated
+# import numpy as np  ##############==> new updated==>
 ##############################################################################################################################################################
 #########################################################################################################################################################
 def home(request):
@@ -1434,6 +1434,7 @@ def regenerate_image_features(request, item_type, item_id):
             {"error": "Failed to generate image features"}, 
             status=status.HTTP_400_BAD_REQUEST
         )
+
 
 
 
