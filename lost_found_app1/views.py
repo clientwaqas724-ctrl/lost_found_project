@@ -413,9 +413,15 @@ class NotificationViewSet(viewsets.ModelViewSet):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def manual_image_search(request):
-    import re, time
-    from django.db.models import Q
-
+    """
+    Manual Image Search API
+    --------------------------------
+    Smart search for lost/found items with:
+      ✅ Flexible filters
+      ✅ Admin vs user-based query limits
+      ✅ Graceful handling of blank search_type
+      ✅ Search logging & metadata
+    """
     start_time = time.time()
 
     try:
@@ -423,9 +429,9 @@ def manual_image_search(request):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        # --- Extract parameters ---
+        # --- Extract parameters safely ---
         search_query = data.get('search_query', '').strip()
-        search_type = data.get('search_type', 'all').lower()
+        search_type = data.get('search_type', 'all').lower() or 'all'
         color_filters = data.get('color_filters', '').strip()
         category_filters = data.get('category_filters', '').strip()
         max_results = data.get('max_results', 100)
@@ -467,14 +473,14 @@ def manual_image_search(request):
                 else:
                     q_objects |= Q(found_location__icontains=term)
 
-            # Color filters (optional)
+            # Color filters
             if color_terms:
                 color_q = Q()
                 for color_term in color_terms:
                     color_q |= Q(color_tags__icontains=color_term) | Q(color__icontains=color_term)
                 q_objects &= color_q
 
-            # Category filter (strict)
+            # Category filters
             if category_terms:
                 category_q = Q()
                 for cat_term in category_terms:
@@ -483,7 +489,7 @@ def manual_image_search(request):
 
             return qs.filter(q_objects).distinct()
 
-        # --- STEP 1: Initial results (before search) strictly by type ---
+        # --- Step 1: Initial results (pre-filter) ---
         if search_type == 'lost':
             initial_results = list(lost_base.order_by('-created_at')[:max_results])
         elif search_type == 'found':
@@ -492,18 +498,18 @@ def manual_image_search(request):
             initial_results = list(lost_base.order_by('-created_at')[:max_results]) + \
                               list(found_base.order_by('-created_at')[:max_results])
 
-        # --- STEP 2: Apply filters ---
+        # --- Step 2: Apply filters ---
         if search_terms or color_terms or category_terms:
             if search_type == 'lost':
-                filtered_results = apply_filters(lost_base, search_terms, color_terms, category_terms, is_lost=True).order_by('-created_at')[:max_results]
+                filtered_results = apply_filters(lost_base, search_terms, color_terms, category_terms, True).order_by('-created_at')[:max_results]
             elif search_type == 'found':
-                filtered_results = apply_filters(found_base, search_terms, color_terms, category_terms, is_lost=False).order_by('-created_at')[:max_results]
+                filtered_results = apply_filters(found_base, search_terms, color_terms, category_terms, False).order_by('-created_at')[:max_results]
             else:  # all
-                lost_results = apply_filters(lost_base, search_terms, color_terms, category_terms, is_lost=True).order_by('-created_at')[:max_results]
-                found_results = apply_filters(found_base, search_terms, color_terms, category_terms, is_lost=False).order_by('-created_at')[:max_results]
+                lost_results = apply_filters(lost_base, search_terms, color_terms, category_terms, True).order_by('-created_at')[:max_results]
+                found_results = apply_filters(found_base, search_terms, color_terms, category_terms, False).order_by('-created_at')[:max_results]
                 filtered_results = list(lost_results) + list(found_results)
         else:
-            filtered_results = initial_results  # if no filters, show initial results
+            filtered_results = initial_results
 
         # --- Serialize filtered results ---
         lost_data = LostItemSerializer([obj for obj in filtered_results if isinstance(obj, LostItem)], many=True, context={'request': request}).data
@@ -740,4 +746,5 @@ def verify_found_item(request, item_id):
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
 ################################################################################################################################
+
 
