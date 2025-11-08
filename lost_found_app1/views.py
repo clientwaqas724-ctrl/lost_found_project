@@ -45,6 +45,7 @@ from .models import (
 ################################################################################################################################
 from .serializers import *
 ################################
+from rest_framework.views import APIView   ###new Updated
 #####################################################################################
 ##############################################################################################################################################################
 #########################################################################################################################################################
@@ -331,7 +332,6 @@ class LostItemViewSet(viewsets.ModelViewSet):
         item.save()
         return Response({"detail": "Item marked as found."})
 #################################################################################################################
-
 #####################################################################################
 # FoundItem ViewSet
 class FoundItemViewSet(viewsets.ModelViewSet):
@@ -362,9 +362,16 @@ class FoundItemViewSet(viewsets.ModelViewSet):
         item.status = 'returned'
         item.save()
         return Response({"detail": "Item marked as returned."})
-
-
-#####################################################################################
+#######################################################################################################################################################################
+class MyItemsView(APIView):
+    permission_classes = [IsAuthenticated]
+    def get(self, request):
+        user = request.user
+        if user.user_type != 'resident':
+            return Response({"detail": "Access denied. Only residents can access this."}, status=403)
+        serializer = UserItemsSerializer(user)
+        return Response(serializer.data)
+#########################################################################################################################################################################
 class ClaimViewSet(viewsets.ModelViewSet):
     serializer_class = ClaimSerializer
     permission_classes = [IsAuthenticated]
@@ -733,3 +740,4 @@ def verify_found_item(request, item_id):
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
 ################################################################################################################################
+
