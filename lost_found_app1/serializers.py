@@ -9,18 +9,12 @@ from urllib.request import urlopen
 from urllib.parse import urlparse
 import os
 import uuid
-from .models import ImageFeature
-import logging
-import traceback
-from rest_framework import viewsets, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
 from django.core.files.base import ContentFile
 from urllib.parse import urlparse
 from urllib.request import urlopen
-import logging
-logger = logging.getLogger(__name__)
-
+import os
+#################################################################################################################################################
+#################################################################################################################################################
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(
         write_only=True,
@@ -62,17 +56,17 @@ class RegisterSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         errors = {}
 
-        # Required field checks
-        required_fields = ['username', 'email', 'password', 'password2', 'first_name', 'last_name', 'user_type']
+        required_fields = [
+            'username', 'email', 'password', 'password2',
+            'first_name', 'last_name', 'user_type'
+        ]
         for field in required_fields:
             if not attrs.get(field):
                 errors[field] = ['This field is required.']
 
-        # Password match check
         if attrs.get('password') and attrs.get('password2') and attrs['password'] != attrs['password2']:
             errors['password2'] = ['Passwords do not match.']
 
-        # Uniqueness checks
         if User.objects.filter(username=attrs.get('username')).exists():
             errors['username'] = ['A user with this username already exists.']
 
@@ -86,38 +80,42 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         """
-        Create user and handle both file uploads, image URLs, and local file paths.
+        Create user instance that supports both:
+        - file upload (multipart/form-data)
+        - image URL (string)
         """
         password = validated_data.pop('password')
         validated_data.pop('password2', None)
 
-        profile_image = validated_data.get('profile_image')
+        profile_image_data = validated_data.pop('profile_image', None)
 
-        # ✅ Case 1: Image is a URL
-        if isinstance(profile_image, str) and profile_image.startswith(('http://', 'https://')):
-            try:
-                response = urlopen(profile_image)
-                file_name = os.path.basename(urlparse(profile_image).path) or f"{uuid.uuid4()}.jpg"
-                file_data = response.read()
-                validated_data['profile_image'] = ContentFile(file_data, name=file_name)
-            except Exception as e:
-                raise serializers.ValidationError({"profile_image": f"Could not download image: {str(e)}"})
-
-        # ✅ Case 2: Image is a local file path (for dev/testing)
-        elif isinstance(profile_image, str) and os.path.exists(profile_image):
-            try:
-                with open(profile_image, 'rb') as f:
-                    file_name = os.path.basename(profile_image)
-                    validated_data['profile_image'] = ContentFile(f.read(), name=file_name)
-            except Exception as e:
-                raise serializers.ValidationError({"profile_image": f"Could not read local file: {str(e)}"})
-
-        # ✅ Case 3: Uploaded file (handled automatically by DRF)
         user = User(**validated_data)
         user.set_password(password)
+
+        # Handle remote image URLs
+        if isinstance(profile_image_data, str) and profile_image_data.startswith(('http://', 'https://')):
+            try:
+                # Open the remote image
+                response = urlopen(profile_image_data)
+                image_content = response.read()
+
+                # Extract the filename from the URL
+                name = os.path.basename(urlparse(profile_image_data).path)
+                if not name:  # fallback if URL doesn't have filename
+                    name = f"{uuid.uuid4()}.jpg"
+
+                # Save image to the field
+                user.profile_image.save(name, ContentFile(image_content), save=False)
+            except Exception as e:
+                raise serializers.ValidationError({"profile_image": f"Invalid image URL: {str(e)}"})
+        elif profile_image_data:
+            # If it’s a local uploaded file, DRF will handle it automatically
+            user.profile_image = profile_image_data
+
         user.save()
         return user
-
+#################################################################################################################################################
+#################################################################################################################################################
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)
     password = serializers.CharField(required=True, write_only=True, style={'input_type': 'password'})
@@ -166,8 +164,8 @@ class LoginSerializer(serializers.Serializer):
             'access': str(refresh.access_token),
         }
 
-        # Get profile image URL safely
-        profile_image_url = user.get_profile_image_url()
+        # Get profile image URL
+        profile_image_url = user.profile_image.url if user.profile_image else None
 
         user_data = {
             'id': user.id,
@@ -192,6 +190,8 @@ class LoginSerializer(serializers.Serializer):
             'redirect_url': redirect_url
         }
 
+#################################################################################################################################################
+#################################################################################################################################################
 class UserProfileSerializer(serializers.ModelSerializer):
     """Serializer for viewing and updating user profile."""
     profile_image_url = serializers.SerializerMethodField()
@@ -216,12 +216,9 @@ class UserProfileSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'user_type', 'created_at', 'updated_at', 'username']
 
     def get_profile_image_url(self, obj):
-        """Safe profile image URL retrieval"""
-        request = self.context.get('request')
-        profile_image_url = obj.get_profile_image_url()
-        if profile_image_url and request:
-            return request.build_absolute_uri(profile_image_url)
-        return profile_image_url
+        if obj.profile_image:
+            return obj.profile_image.url
+        return None
 
     def update(self, instance, validated_data):
         # Handle profile image separately to avoid required field issues
@@ -237,7 +234,10 @@ class UserProfileSerializer(serializers.ModelSerializer):
         
         instance.save()
         return instance
+#################################################################################################################################################
+#################################################################################################################################################
 
+#################(new update the password update code)#################
 class UpdatePasswordSerializer(serializers.Serializer):
     """Serializer for updating password using email and old password."""
     email = serializers.EmailField(required=True)
@@ -270,7 +270,9 @@ class UpdatePasswordSerializer(serializers.Serializer):
         user.set_password(self.validated_data['new_password'])
         user.save()
         return user
+#####################################################################################
 
+#################(new forget the password update code)#################
 class ForgotPasswordSerializer(serializers.Serializer):
     """Serializer for resetting password using email only."""
     email = serializers.EmailField(required=True)
@@ -298,148 +300,195 @@ class ForgotPasswordSerializer(serializers.Serializer):
         user.set_password(self.validated_data['new_password'])
         user.save()
         return user
+################################################################################################################
 
+
+
+
+###########################################################################################################################################################################
+###########################################################################################################################################################################
 class UserListSerializer(serializers.ModelSerializer):
     """
     Serializer for listing users (limited fields for privacy)
     """
-    profile_image_url = serializers.SerializerMethodField()
-
     class Meta:
         model = User
         fields = (
             'id', 'username', 'email', 'first_name', 'last_name',
             'user_type', 'phone_number', 'tower_number', 'room_number',
-            'profile_image', 'profile_image_url', 'date_joined', 'is_active'
+            'profile_image', 'date_joined', 'is_active'
         )
         read_only_fields = fields
-
-    def get_profile_image_url(self, obj):
-        request = self.context.get('request')
-        profile_image_url = obj.get_profile_image_url()
-        if profile_image_url and request:
-            return request.build_absolute_uri(profile_image_url)
-        return profile_image_url
-
+#################################################################################################################################################
+#################################################################################################################################################
+#################################################################################################################################################
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = Category
         fields = ['id', 'name', 'description', 'created_at']
         read_only_fields = ['id', 'created_at']
-####################################################################################################################################################################################################################
+######################################################################################
+class FlexibleCategoryField(serializers.PrimaryKeyRelatedField):
+    """
+    Allows both ID (int) and name (str) to be accepted when setting category.
+    """
+    def to_internal_value(self, data):
+        from django.core.exceptions import ObjectDoesNotExist
+        
+        if isinstance(data, int) or (isinstance(data, str) and data.isdigit()):
+            # Try to treat it as PK
+            try:
+                return Category.objects.get(pk=int(data))
+            except Category.DoesNotExist:
+                raise serializers.ValidationError(f"Category with id {data} does not exist.")
+        elif isinstance(data, str):
+            # Try to treat it as name
+            try:
+                return Category.objects.get(name=data)
+            except Category.DoesNotExist:
+                raise serializers.ValidationError(f"Category with name '{data}' does not exist.")
+        else:
+            raise serializers.ValidationError("Invalid category format. Must be ID or name.")
+#################################################################################################################################################
 class LostItemSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
-    user_id = serializers.UUIDField(source='user.id', read_only=True)
+    user_info = serializers.SerializerMethodField()  # New field
+    
+    category = FlexibleCategoryField(queryset=Category.objects.all())
     category_name = serializers.CharField(source='category.name', read_only=True)
-    item_image_url = serializers.SerializerMethodField()
-    category = serializers.CharField(required=False, allow_blank=True)
+    
+    search_tags_list = serializers.SerializerMethodField()
+    color_tags_list = serializers.SerializerMethodField()
+    material_tags_list = serializers.SerializerMethodField()
+
+    item_image = serializers.ImageField(required=False, allow_null=True)
 
     class Meta:
         model = LostItem
         fields = [
-            'id', 'user', 'user_id', 'title', 'description', 'category', 'category_name',
+            'id', 'user', 'user_info', 'title', 'description', 'category', 'category_name',
             'search_tags', 'color_tags', 'material_tags', 'lost_location',
-            'lost_date', 'lost_time', 'brand', 'color', 'size', 'item_image', 'item_image_url',
-            'status', 'is_verified', 'created_at', 'updated_at'
+            'lost_date', 'lost_time', 'brand', 'color', 'size', 'item_image',
+            'status', 'is_verified', 'created_at', 'updated_at',
+            'search_tags_list', 'color_tags_list', 'material_tags_list'
         ]
-        read_only_fields = ['id', 'user', 'user_id', 'created_at', 'updated_at', 'is_verified']
+        read_only_fields = ['id', 'user', 'created_at', 'updated_at', 'is_verified']
 
-    def get_item_image_url(self, obj):
-        """Safe image URL retrieval"""
-        request = self.context.get('request')
-        item_image_url = obj.get_item_image_url()
-        if item_image_url and request:
-            return request.build_absolute_uri(item_image_url)
-        return item_image_url
+    def get_search_tags_list(self, obj):
+        return obj.get_search_tags_list()
 
-    def validate_category(self, value):
-        if not value:
-            return None
-        try:
-            if isinstance(value, str) and value.isdigit():
-                return Category.objects.get(id=int(value))
-            elif isinstance(value, str):
-                return Category.objects.get(name__iexact=value.strip())
-            return value
-        except Category.DoesNotExist:
-            raise serializers.ValidationError("Category does not exist.")
+    def get_color_tags_list(self, obj):
+        return obj.get_color_tags_list()
+
+    def get_material_tags_list(self, obj):
+        return obj.get_material_tags_list()
+    
+    def get_user_info(self, obj):
+        return {
+            "id": obj.user.id,
+            "username": obj.user.username,
+            "email": obj.user.email,
+            "role": getattr(obj.user, 'user_type', None)
+        }
 
     def create(self, validated_data):
         request = self.context.get('request')
-        if request and request.user.is_authenticated:
-            validated_data['user'] = request.user
-        return super().create(validated_data)
-####################################################################################################################################################################################################################
+        user = request.user
+        image_data = validated_data.get('item_image', None)
+        instance = LostItem(**validated_data)
+        instance.user = user
+
+        if image_data and isinstance(image_data, str) and image_data.startswith("http"):
+            try:
+                image_name = os.path.basename(urlparse(image_data).path)
+                image_content = urlopen(image_data).read()
+                instance.item_image.save(image_name, ContentFile(image_content), save=False)
+            except Exception as e:
+                raise serializers.ValidationError({"item_image": f"Invalid image URL or download failed: {e}"})
+
+        instance.save()
+        return instance
+################################################################################################################################################################
 class FoundItemSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
-    user_id = serializers.UUIDField(source='user.id', read_only=True)
+    user_info = serializers.SerializerMethodField()  # New field
     category_name = serializers.CharField(source='category.name', read_only=True)
-    item_image_url = serializers.SerializerMethodField()
-    category = serializers.CharField(required=False, allow_blank=True)
+    search_tags_list = serializers.SerializerMethodField()
+    color_tags_list = serializers.SerializerMethodField()
+    material_tags_list = serializers.SerializerMethodField()
+
+    # Support both uploaded image and URL
+    image_url = serializers.URLField(required=False, allow_blank=True)
 
     class Meta:
         model = FoundItem
         fields = [
-            'id', 'user', 'user_id', 'title', 'description', 'category', 'category_name',
+            'id', 'user', 'user_info', 'title', 'description', 'category', 'category_name',
             'search_tags', 'color_tags', 'material_tags', 'found_location',
             'found_date', 'found_time', 'brand', 'color', 'size',
-            'item_image', 'item_image_url', 'storage_location', 'status',
-            'is_verified', 'created_at', 'updated_at'
+            'item_image', 'image_url', 'storage_location', 'status',
+            'is_verified', 'created_at', 'updated_at',
+            'search_tags_list', 'color_tags_list', 'material_tags_list'
         ]
-        read_only_fields = ['id', 'user', 'user_id', 'created_at', 'updated_at', 'is_verified']
+        read_only_fields = ['id', 'user', 'created_at', 'updated_at', 'is_verified']
 
-    def get_item_image_url(self, obj):
-        """Safe image URL retrieval"""
-        request = self.context.get('request')
-        item_image_url = obj.get_item_image_url()
-        if item_image_url and request:
-            return request.build_absolute_uri(item_image_url)
-        return item_image_url
+    def get_search_tags_list(self, obj):
+        return obj.get_search_tags_list()
 
-    def validate_category(self, value):
-        """Convert category name or ID to Category object"""
-        if not value or value == '':  # Allow empty category
-            return None
-            
-        try:
-            # Try to find by ID first
-            if value.isdigit():
-                category = Category.objects.get(id=int(value))
-            else:
-                # Try to find by name (case insensitive)
-                category = Category.objects.get(name__iexact=value.strip())
-            return category
-        except Category.DoesNotExist:
-            raise serializers.ValidationError(f"Category '{value}' does not exist. Please select a valid category or leave empty.")
-        except (ValueError, AttributeError) as e:
-            logger.error(f"Category validation error: {e}")
-            raise serializers.ValidationError("Invalid category format. Use category ID or name.")
+    def get_color_tags_list(self, obj):
+        return obj.get_color_tags_list()
 
-    def create(self, validated_data):
-        request = self.context.get('request')
-        if request and request.user.is_authenticated:
-            validated_data['user'] = request.user
-        return super().create(validated_data)
-####################################################################################################################################################################################################################
-class ClaimSerializer(serializers.ModelSerializer):
-    user = serializers.StringRelatedField(read_only=True)
-    user_email = serializers.EmailField(source='user.email', read_only=True)
-    found_item_title = serializers.CharField(source='found_item.title', read_only=True)
-    found_item_image = serializers.ImageField(source='found_item.item_image', read_only=True)
+    def get_material_tags_list(self, obj):
+        return obj.get_material_tags_list()
 
-    class Meta:
-        model = Claim
-        fields = [
-            'id', 'user', 'user_email', 'found_item', 'found_item_title', 'found_item_image',
-            'claim_description', 'proof_of_ownership', 'supporting_images',
-            'status', 'admin_notes', 'created_at', 'updated_at', 'resolved_at'
-        ]
-        read_only_fields = ['id', 'user', 'created_at', 'updated_at', 'resolved_at']
+    def get_user_info(self, obj):
+        return {
+            "id": obj.user.id,
+            "username": obj.user.username,
+            "email": obj.user.email,
+            "role": getattr(obj.user, 'user_type', None)
+        }
 
     def create(self, validated_data):
         validated_data['user'] = self.context['request'].user
         return super().create(validated_data)
+#################################################################################################################################################
+class ClaimSerializer(serializers.ModelSerializer):
+    user = serializers.StringRelatedField(read_only=True)
+    found_item_id = serializers.UUIDField(write_only=True, required=True)
+    found_item_title = serializers.CharField(source='found_item.title', read_only=True)
+    proof_of_ownership = serializers.CharField(allow_blank=True, required=False)
 
+    class Meta:
+        model = Claim
+        fields = [
+            'id', 'user', 'found_item_id', 'found_item_title',
+            'claim_description', 'proof_of_ownership', 'supporting_images',
+            'status', 'admin_notes', 'created_at', 'updated_at', 'resolved_at'
+        ]
+        read_only_fields = ['id', 'user', 'found_item_title', 'status', 'created_at', 'updated_at', 'resolved_at']
+
+    def create(self, validated_data):
+        user = self.context['request'].user
+        found_item_id = validated_data.pop('found_item_id')
+
+        # Fetch FoundItem
+        try:
+            found_item = FoundItem.objects.get(id=found_item_id)
+        except FoundItem.DoesNotExist:
+            raise serializers.ValidationError({"found_item_id": "Found item does not exist."})
+
+        # Prevent duplicate claims by the same user
+        if Claim.objects.filter(user=user, found_item=found_item).exists():
+            raise serializers.ValidationError({"detail": "You have already submitted a claim for this item."})
+
+        claim = Claim.objects.create(
+            user=user,
+            found_item=found_item,
+            **validated_data
+        )
+        return claim
+#################################################################################################################################################
 class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
@@ -448,7 +497,7 @@ class NotificationSerializer(serializers.ModelSerializer):
             'lost_item', 'found_item', 'claim', 'is_read', 'created_at'
         ]
         read_only_fields = ['id', 'user', 'created_at']
-
+#################################################################################################################################################
 class ImageSearchLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = ImageSearchLog
@@ -457,89 +506,31 @@ class ImageSearchLogSerializer(serializers.ModelSerializer):
             'category_filters', 'results_count', 'search_duration', 'created_at'
         ]
         read_only_fields = ['id', 'user', 'created_at']
-
+#################################################################################################################################################
 class ManualImageSearchSerializer(serializers.Serializer):
-    """
-    Enhanced serializer for manual image search.
-    All fields are optional and non-blocking to allow flexible search queries.
-    """
-    search_query = serializers.CharField(
-        required=False,
-        allow_blank=True,
-        default=''
-    )
-
+    search_query = serializers.CharField(required=False, allow_blank=True)
     search_type = serializers.ChoiceField(
-        choices=[('lost', 'Lost Items'), ('found', 'Found Items'), ('all', 'All Items')],
+        choices=[('lost', 'Lost Items'), ('found', 'Found Items'), ('all', 'All')],
         required=False,
         default='all'
     )
-
-    color_filters = serializers.CharField(
-        required=False,
-        allow_blank=True,
-        default=''
-    )
-
-    category_filters = serializers.CharField(
-        required=False,
-        allow_blank=True,
-        default=''
-    )
-
-    max_results = serializers.IntegerField(
-        required=False,
-        default=50,
-        min_value=1,
-        max_value=100
-    )
-
+    color_filters = serializers.CharField(required=False, allow_blank=True)
+    category_filters = serializers.CharField(required=False, allow_blank=True)
+    max_results = serializers.IntegerField(default=50, min_value=1, max_value=100)
+#################################################################################################################################################
 class DashboardStatsSerializer(serializers.Serializer):
     total_lost_items = serializers.IntegerField()
     total_found_items = serializers.IntegerField()
     total_claims = serializers.IntegerField()
     pending_claims = serializers.IntegerField()
     approved_claims = serializers.IntegerField()
-    unread_notifications = serializers.IntegerField()
-    recent_activities = serializers.ListField()
-
-class AdminDashboardStatsSerializer(serializers.Serializer):
-    total_lost_items = serializers.IntegerField()
-    total_found_items = serializers.IntegerField()
-    total_claims = serializers.IntegerField()
-    pending_claims = serializers.IntegerField()
-    approved_claims = serializers.IntegerField()
     total_users = serializers.IntegerField()
+    recent_activities = serializers.ListField()
+#################################################################################################################################################
+class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     verified_lost_items = serializers.IntegerField()
     verified_found_items = serializers.IntegerField()
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
-    recent_activities = serializers.ListField()
-
-class ImageFeatureSerializer(serializers.ModelSerializer):
-    """
-    Serializer for image features used in visual search.
-    """
-    class Meta:
-        model = ImageFeature
-        fields = ['id', 'item_type', 'item_id', 'dominant_colors', 'color_palette', 
-                 'image_size', 'file_size', 'aspect_ratio', 'image_hash', 'created_at']
-
-class ImageSearchResultSerializer(serializers.Serializer):
-    """
-    Serializer for image search results
-    """
-    item_type = serializers.CharField()
-    item_id = serializers.UUIDField()
-    similarity_score = serializers.FloatField()
-    feature = ImageFeatureSerializer()
-
-class ImageSearchRequestSerializer(serializers.Serializer):
-    """
-    Serializer for image search request validation
-    """
-    image = serializers.ImageField()
-    search_type = serializers.ChoiceField(choices=['lost', 'found', 'both'], default='both')
-    max_results = serializers.IntegerField(default=10, min_value=1, max_value=50)
-
+######################################################################################################
