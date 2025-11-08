@@ -452,7 +452,17 @@ class FoundItemSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         validated_data['user'] = self.context['request'].user
         return super().create(validated_data)
-#################################################################################################################################################
+######################################################################################################################################################################################################
+class UserItemsSerializer(serializers.Serializer):
+    lost_items = serializers.SerializerMethodField()
+    found_items = serializers.SerializerMethodField()
+    def get_lost_items(self, obj):
+        lost_items = LostItem.objects.filter(user=obj)
+        return LostItemSerializer(lost_items, many=True).data
+    def get_found_items(self, obj):
+        found_items = FoundItem.objects.filter(user=obj)
+        return FoundItemSerializer(found_items, many=True).data
+##############################################################################################################################################################################################
 class ClaimSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
     found_item_id = serializers.UUIDField(write_only=True, required=True)
@@ -534,3 +544,4 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
 ######################################################################################################
+
