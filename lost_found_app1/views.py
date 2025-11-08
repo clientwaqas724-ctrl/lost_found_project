@@ -291,6 +291,7 @@ class CategoryViewSet(viewsets.ModelViewSet):
             permission_classes = [IsAuthenticated, IsAdminOnly]
         return [permission() for permission in permission_classes]
 #################################################################################################################################################################################################################
+#################################################################################################################################################################################################################
 class LostItemViewSet(viewsets.ModelViewSet):
     serializer_class = LostItemSerializer
     permission_classes = [IsAuthenticated]
@@ -378,6 +379,7 @@ class LostItemViewSet(viewsets.ModelViewSet):
             "count": queryset.count(),
             "data": serializer.data
         })
+#################################################################################################################################################################################################################
 #################################################################################################################################################################################################################
 # ========================== FOUND ITEMS ==========================
 class FoundItemViewSet(viewsets.ModelViewSet):
@@ -487,6 +489,189 @@ class FoundItemViewSet(viewsets.ModelViewSet):
             return Response({
                 "success": False,
                 "message": "Failed to mark item as returned.",
+                "error": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+#################################################################################################################################################################################################################
+####################################################################################################################################################################################################
+# Add these missing ViewSets to your views.py after the FoundItemViewSet
+class ClaimViewSet(viewsets.ModelViewSet):
+    """
+    Claim management viewset
+    """
+    serializer_class = ClaimSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        """Users can only see their own claims, admins can see all"""
+        user = self.request.user
+        if user.user_type == 'admin':
+            return Claim.objects.select_related('user', 'found_item').order_by('-created_at')
+        return Claim.objects.filter(user=user).select_related('user', 'found_item').order_by('-created_at')
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+    def create(self, request, *args, **kwargs):
+        try:
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            claim = serializer.save()
+
+            # Create notification for admin
+            admin_users = User.objects.filter(user_type='admin')
+            for admin in admin_users:
+                Notification.objects.create(
+                    user=admin,
+                    notification_type='claim_update',
+                    title='New Claim Submitted',
+                    message=f'A new claim has been submitted by {request.user.username} for item "{claim.found_item.title}".',
+                    claim=claim
+                )
+
+            response_serializer = ClaimSerializer(claim, context={'request': request})
+            return Response({
+                "success": True,
+                "message": "Claim submitted successfully!",
+                "data": response_serializer.data
+            }, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            logger.error(f"Error creating claim: {str(e)}")
+            return Response({
+                "success": False,
+                "message": "Failed to submit claim",
+                "error": str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminOnly])
+    def approve(self, request, pk=None):
+        """Approve a claim (admin only)"""
+        try:
+            claim = self.get_object()
+            claim.status = 'approved'
+            claim.resolved_at = timezone.now()
+            claim.save()
+
+            # Update found item status
+            claim.found_item.status = 'returned'
+            claim.found_item.save()
+
+            # Create notification for user
+            Notification.objects.create(
+                user=claim.user,
+                notification_type='claim_update',
+                title='Claim Approved',
+                message=f'Your claim for "{claim.found_item.title}" has been approved!',
+                claim=claim
+            )
+
+            return Response({
+                "success": True,
+                "message": "Claim approved successfully!"
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error approving claim: {str(e)}")
+            return Response({
+                "success": False,
+                "message": "Failed to approve claim",
+                "error": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminOnly])
+    def reject(self, request, pk=None):
+        """Reject a claim (admin only)"""
+        try:
+            claim = self.get_object()
+            claim.status = 'rejected'
+            claim.resolved_at = timezone.now()
+            claim.save()
+
+            # Create notification for user
+            Notification.objects.create(
+                user=claim.user,
+                notification_type='claim_update',
+                title='Claim Rejected',
+                message=f'Your claim for "{claim.found_item.title}" has been rejected.',
+                claim=claim
+            )
+
+            return Response({
+                "success": True,
+                "message": "Claim rejected successfully!"
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error rejecting claim: {str(e)}")
+            return Response({
+                "success": False,
+                "message": "Failed to reject claim",
+                "error": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+#################################################################################################################################################################################################################
+############################################################################################################################################################################################################
+class NotificationViewSet(viewsets.ModelViewSet):
+    """
+    Notification management viewset
+    """
+    serializer_class = NotificationSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        """Users can only see their own notifications"""
+        return Notification.objects.filter(user=self.request.user).order_by('-created_at')
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
+
+    @action(detail=False, methods=['get'])
+    def unread(self, request):
+        """Get unread notifications"""
+        unread_notifications = self.get_queryset().filter(is_read=False)
+        serializer = self.get_serializer(unread_notifications, many=True)
+        return Response({
+            "success": True,
+            "count": unread_notifications.count(),
+            "data": serializer.data
+        })
+
+    @action(detail=True, methods=['post'])
+    def mark_read(self, request, pk=None):
+        """Mark notification as read"""
+        try:
+            notification = self.get_object()
+            notification.is_read = True
+            notification.save()
+            return Response({
+                "success": True,
+                "message": "Notification marked as read"
+            })
+        except Exception as e:
+            logger.error(f"Error marking notification as read: {str(e)}")
+            return Response({
+                "success": False,
+                "message": "Failed to mark notification as read",
+                "error": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['post'])
+    def mark_all_read(self, request):
+        """Mark all notifications as read"""
+        try:
+            updated_count = self.get_queryset().filter(is_read=False).update(is_read=True)
+            return Response({
+                "success": True,
+                "message": f"Marked {updated_count} notifications as read"
+            })
+        except Exception as e:
+            logger.error(f"Error marking all notifications as read: {str(e)}")
+            return Response({
+                "success": False,
+                "message": "Failed to mark notifications as read",
                 "error": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 ########################################################################################################################################################################################################
@@ -977,5 +1162,6 @@ def regenerate_image_features(request, item_type, item_id):
             {"error": "Failed to generate image features"}, 
             status=status.HTTP_400_BAD_REQUEST
         )
+
 
 
