@@ -290,7 +290,7 @@ class CategoryViewSet(viewsets.ModelViewSet):
         else:
             permission_classes = [IsAuthenticated, IsAdminOnly]
         return [permission() for permission in permission_classes]
-
+#################################################################################################################################################################################################################
 class LostItemViewSet(viewsets.ModelViewSet):
     serializer_class = LostItemSerializer
     permission_classes = [IsAuthenticated]
@@ -427,7 +427,7 @@ class LostItemViewSet(viewsets.ModelViewSet):
             "count": queryset.count(),
             "data": serializer.data
         })
-
+#################################################################################################################################################################################################################
 class FoundItemViewSet(viewsets.ModelViewSet):
     serializer_class = FoundItemSerializer
     permission_classes = [IsAuthenticated]
@@ -660,48 +660,42 @@ class NotificationViewSet(viewsets.ModelViewSet):
     def mark_all_read(self, request):
         Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
         return Response({"detail": "All notifications marked as read."})
-
+########################################################################################################################################################################################################
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def manual_image_search(request):
     """
     Enhanced Manual Image Search API
-    - Shows ALL items for searching (both admin and resident)
-    - Better error handling
-    - Improved response format
+    - When first loaded: shows ALL Lost and Found items
+    - After filters: shows filtered results
+    - Works for both admin and regular users
     """
     start_time = time.time()
 
     try:
         serializer = ManualImageSearchSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response({
-                "success": False,
-                "message": "Invalid search parameters",
-                "errors": serializer.errors
-            }, status=status.HTTP_400_BAD_REQUEST)
-
+        serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+
         search_query = data.get('search_query', '').strip()
         search_type = data.get('search_type', 'all').lower()
         color_filters = data.get('color_filters', '').strip()
         category_filters = data.get('category_filters', '').strip()
-        max_results = data.get('max_results', 50)
+        max_results = data.get('max_results', 100)
 
-        user = request.user
+        # Base QuerySets
+        lost_base = LostItem.objects.select_related('category', 'user').all()
+        found_base = FoundItem.objects.select_related('category', 'user').all()
 
-        # For MANUAL SEARCH - show ALL items (both admin and resident can search all items)
-        lost_base = LostItem.objects.all()
-        found_base = FoundItem.objects.all()
-
-        # Apply search filters
+        # Apply filters function
         def apply_filters(qs, search_terms, color_terms, category_terms, is_lost=True):
             if not search_terms and not color_terms and not category_terms:
+                # No filters — return all items
                 return qs
 
             q_objects = Q()
 
-            # Search terms
+            # Text-based search
             for term in search_terms:
                 q_objects |= (
                     Q(title__icontains=term) |
@@ -715,72 +709,73 @@ def manual_image_search(request):
                 else:
                     q_objects |= Q(found_location__icontains=term)
 
-            # Color filters
+            # Color filter
             if color_terms:
                 color_q = Q()
                 for color_term in color_terms:
                     color_q |= Q(color__icontains=color_term) | Q(color_tags__icontains=color_term)
                 q_objects &= color_q
 
-            # Category filters
+            # Category filter
             if category_terms:
                 category_q = Q()
-                for category_term in category_terms:
-                    category_q |= Q(category__name__icontains=category_term)
+                for cat_term in category_terms:
+                    category_q |= Q(category__name__icontains=cat_term)
                 q_objects &= category_q
 
             return qs.filter(q_objects).distinct()
 
-        # Process search parameters
-        search_terms = [term.strip().lower() for term in search_query.split(',') if term.strip()] if search_query else []
-        color_terms = [color.strip().lower() for color in color_filters.split(',') if color.strip()] if color_filters else []
-        category_terms = [cat.strip().lower() for cat in category_filters.split(',') if cat.strip()] if category_filters else []
+        # Split filters
+        search_terms = [s.strip().lower() for s in search_query.split(',') if s.strip()]
+        color_terms = [c.strip().lower() for c in color_filters.split(',') if c.strip()]
+        category_terms = [c.strip().lower() for c in category_filters.split(',') if c.strip()]
 
-        # Perform search based on type
+        # Get results (show all if no filters)
         lost_results = []
         found_results = []
 
         if search_type in ['all', 'lost']:
             lost_results = apply_filters(lost_base, search_terms, color_terms, category_terms, is_lost=True)
-            lost_results = lost_results[:max_results]
+            if search_terms or color_terms or category_terms:
+                lost_results = lost_results[:max_results]
 
         if search_type in ['all', 'found']:
             found_results = apply_filters(found_base, search_terms, color_terms, category_terms, is_lost=False)
-            found_results = found_results[:max_results]
+            if search_terms or color_terms or category_terms:
+                found_results = found_results[:max_results]
 
-        # Combine and serialize results
+        # Combine & sort
         all_results = list(lost_results) + list(found_results)
         all_results.sort(key=lambda x: x.created_at, reverse=True)
 
-        # Serialize data with request context for image URLs
+        # Serialize results
         lost_data = LostItemSerializer(
-            [item for item in all_results if isinstance(item, LostItem)],
-            many=True,
-            context={'request': request}
+            [obj for obj in all_results if isinstance(obj, LostItem)],
+            many=True, context={'request': request}
         ).data
 
         found_data = FoundItemSerializer(
-            [item for item in all_results if isinstance(item, FoundItem)],
-            many=True,
-            context={'request': request}
+            [obj for obj in all_results if isinstance(obj, FoundItem)],
+            many=True, context={'request': request}
         ).data
 
         results_data = lost_data + found_data
-        search_duration = round(time.time() - start_time, 3)
 
-        # Log the search
+        # Log
         ImageSearchLog.objects.create(
-            user=user,
+            user=request.user,
             search_type=search_type,
             search_query=search_query or 'N/A',
             color_filters=color_filters,
             category_filters=category_filters,
             results_count=len(results_data),
-            search_duration=search_duration
+            search_duration=round(time.time() - start_time, 3)
         )
 
-        response_data = {
+        # Response
+        return Response({
             "success": True,
+            "message": f"Found {len(results_data)} item(s)" if results_data else "No items found.",
             "count": len(results_data),
             "results": results_data,
             "search_metadata": {
@@ -791,25 +786,18 @@ def manual_image_search(request):
                     "categories": category_filters
                 },
                 "results_count": len(results_data),
-                "search_duration_seconds": search_duration
+                "search_duration_seconds": round(time.time() - start_time, 3)
             }
-        }
-
-        if not results_data:
-            response_data["message"] = "No items found matching your search criteria."
-        else:
-            response_data["message"] = f"Found {len(results_data)} items matching your search."
-
-        return Response(response_data, status=status.HTTP_200_OK)
+        }, status=status.HTTP_200_OK)
 
     except Exception as e:
-        logger.error(f"Manual image search error: {str(e)}")
+        logger.error(f"Manual image search error: {e}", exc_info=True)
         return Response({
             "success": False,
-            "message": "An error occurred during search",
+            "message": "An error occurred during search.",
             "error": str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+####################################################################################################################################################################################################################
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def user_dashboard(request):
@@ -879,7 +867,7 @@ def user_dashboard(request):
     serializer.is_valid(raise_exception=False)
 
     return Response(serializer.data)
-
+####################################################################################################################################################################################################################
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, IsAdminOnly])
 def admin_dashboard(request):
@@ -955,7 +943,7 @@ def admin_dashboard(request):
     
     serializer = AdminDashboardStatsSerializer(stats)
     return Response(serializer.data)
-
+####################################################################################################################################################################################################################
 # Item Verification APIs (Admin only)
 @api_view(['POST'])
 @permission_classes([IsAuthenticated, IsAdminOnly])
@@ -977,7 +965,7 @@ def verify_lost_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except LostItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
-
+####################################################################################################################################################################################################################
 @api_view(['POST'])
 @permission_classes([IsAuthenticated, IsAdminOnly])
 def verify_found_item(request, item_id):
@@ -998,7 +986,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
-
+####################################################################################################################################################################################################################
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def image_based_search(request):
@@ -1097,7 +1085,7 @@ def image_based_search(request):
             "message": "An error occurred during image search",
             "error": str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+####################################################################################################################################################################################################################
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_image_features(request, item_type, item_id):
@@ -1113,7 +1101,7 @@ def get_image_features(request, item_type, item_id):
             {"error": "Image features not found for this item"}, 
             status=status.HTTP_404_NOT_FOUND
         )
-
+####################################################################################################################################################################################################################
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def regenerate_image_features(request, item_type, item_id):
@@ -1160,3 +1148,4 @@ def regenerate_image_features(request, item_type, item_id):
             {"error": "Failed to generate image features"}, 
             status=status.HTTP_400_BAD_REQUEST
         )
+
