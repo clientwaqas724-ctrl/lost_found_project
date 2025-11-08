@@ -414,114 +414,135 @@ class NotificationViewSet(viewsets.ModelViewSet):
 @permission_classes([IsAuthenticated])
 def manual_image_search(request):
     """
-    Manual Image Search API
-    --------------------------------
-    Smart search for lost/found items with:
-      ✅ Flexible filters
-      ✅ Admin vs user-based query limits
-      ✅ Graceful handling of blank search_type
-      ✅ Search logging & metadata
+    AI-like Smart Image Search API (Fixed)
+    --------------------------------------
+    ✅ Always returns valid JSON
+    ✅ Strict category + type validation
+    ✅ Safe serializer validation
+    ✅ Handles all combinations cleanly
     """
     start_time = time.time()
 
     try:
         serializer = ManualImageSearchSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
         data = serializer.validated_data
+        search_query = (data.get('search_query') or '').strip()
+        search_type = (data.get('search_type') or 'all').strip().lower()
+        color_filters = (data.get('color_filters') or '').strip()
+        category_filters = (data.get('category_filters') or '').strip()
+        max_results = data.get('max_results', 50)
 
-        # --- Extract parameters safely ---
-        search_query = data.get('search_query', '').strip()
-        search_type = data.get('search_type', 'all').lower() or 'all'
-        color_filters = data.get('color_filters', '').strip()
-        category_filters = data.get('category_filters', '').strip()
-        max_results = data.get('max_results', 100)
-
-        # --- Split filters ---
-        search_terms = [s.strip().lower() for s in re.split(r'[, ]+', search_query) if s.strip()]
+        # Clean token lists
+        search_terms = [t.strip().lower() for t in re.split(r'[, ]+', search_query) if t.strip()]
         color_terms = [c.strip().lower() for c in re.split(r'[, ]+', color_filters) if c.strip()]
         category_terms = [c.strip().lower() for c in re.split(r'[, ]+', category_filters) if c.strip()]
 
-        # --- Admin check ---
-        is_admin = request.user.is_staff or request.user.is_superuser
+        LostModel, FoundModel, CategoryModel = LostItem, FoundItem, Category
+        lost_qs, found_qs = LostModel.objects.none(), FoundModel.objects.none()
+        matched_category = None
+        message = "Results found successfully."
 
-        # --- Base QuerySets ---
-        if is_admin:
-            lost_base = LostItem.objects.select_related('category', 'user').all()
-            found_base = FoundItem.objects.select_related('category', 'user').all()
-        else:
-            lost_base = LostItem.objects.select_related('category', 'user').filter(user=request.user)
-            found_base = FoundItem.objects.select_related('category', 'user').filter(user=request.user)
+        # ---------------------- CATEGORY VALIDATION ----------------------
+        if category_filters and category_filters.lower() != 'all':
+            matched_category = CategoryModel.objects.filter(name__iexact=category_filters).first()
+            if not matched_category:
+                return Response({
+                    "count": 0,
+                    "results": [],
+                    "message": f"Category '{category_filters}' does not exist.",
+                    "search_metadata": {"results_count": 0}
+                }, status=status.HTTP_200_OK)
 
-        # --- Filtering function ---
-        def apply_filters(qs, search_terms, color_terms, category_terms, is_lost=True):
-            q_objects = Q()
+            # Check existence under this category
+            has_lost = LostModel.objects.filter(category=matched_category).exists()
+            has_found = FoundModel.objects.filter(category=matched_category).exists()
 
-            # Search terms
-            for term in search_terms:
-                q_objects |= (
-                    Q(title__icontains=term) |
-                    Q(description__icontains=term) |
-                    Q(search_tags__icontains=term) |
-                    Q(color_tags__icontains=term) |
-                    Q(material_tags__icontains=term) |
-                    Q(brand__icontains=term) |
-                    Q(color__icontains=term) |
-                    Q(size__icontains=term)
-                )
-                if is_lost:
-                    q_objects |= Q(lost_location__icontains=term)
-                else:
-                    q_objects |= Q(found_location__icontains=term)
+            if search_type == 'lost' and not has_lost:
+                return Response({
+                    "count": 0,
+                    "results": [],
+                    "message": f"No Lost items in '{matched_category.name}'.",
+                    "search_metadata": {"results_count": 0}
+                })
 
-            # Color filters
+            if search_type == 'found' and not has_found:
+                return Response({
+                    "count": 0,
+                    "results": [],
+                    "message": f"No Found items in '{matched_category.name}'.",
+                    "search_metadata": {"results_count": 0}
+                })
+
+        # ---------------------- SEARCH LOGIC ----------------------
+        if search_type not in ['lost', 'found', 'all']:
+            search_type = 'all'
+
+        def build_query(base_qs):
+            """Build flexible Q objects for query search."""
+            if search_terms:
+                q = Q()
+                for term in search_terms:
+                    q |= (
+                        Q(title__icontains=term)
+                        | Q(description__icontains=term)
+                        | Q(search_tags__icontains=term)
+                        | Q(color_tags__icontains=term)
+                        | Q(material_tags__icontains=term)
+                        | Q(brand__icontains=term)
+                        | Q(color__icontains=term)
+                        | Q(size__icontains=term)
+                        | Q(category__name__icontains=term)
+                        | Q(lost_location__icontains=term)
+                    )
+                base_qs = base_qs.filter(q)
+
             if color_terms:
-                color_q = Q()
-                for color_term in color_terms:
-                    color_q |= Q(color_tags__icontains=color_term) | Q(color__icontains=color_term)
-                q_objects &= color_q
+                cq = Q()
+                for c in color_terms:
+                    cq |= Q(color_tags__icontains=c) | Q(color__icontains=c)
+                base_qs = base_qs.filter(cq)
 
-            # Category filters
-            if category_terms:
-                category_q = Q()
-                for cat_term in category_terms:
-                    category_q |= Q(category__name__iexact=cat_term)
-                q_objects &= category_q
+            if matched_category:
+                base_qs = base_qs.filter(category=matched_category)
+            elif category_terms:
+                cat_q = Q()
+                for cat in category_terms:
+                    cat_q |= Q(category__name__iexact=cat)
+                base_qs = base_qs.filter(cat_q)
 
-            return qs.filter(q_objects).distinct()
+            return base_qs.distinct()
 
-        # --- Step 1: Initial results (pre-filter) ---
         if search_type == 'lost':
-            initial_results = list(lost_base.order_by('-created_at')[:max_results])
+            lost_qs = build_query(LostModel.objects.all())
         elif search_type == 'found':
-            initial_results = list(found_base.order_by('-created_at')[:max_results])
+            found_qs = build_query(FoundModel.objects.all())
         else:  # all
-            initial_results = list(lost_base.order_by('-created_at')[:max_results]) + \
-                              list(found_base.order_by('-created_at')[:max_results])
+            lost_qs = build_query(LostModel.objects.all())
+            found_qs = build_query(FoundModel.objects.all())
 
-        # --- Step 2: Apply filters ---
-        if search_terms or color_terms or category_terms:
-            if search_type == 'lost':
-                filtered_results = apply_filters(lost_base, search_terms, color_terms, category_terms, True).order_by('-created_at')[:max_results]
-            elif search_type == 'found':
-                filtered_results = apply_filters(found_base, search_terms, color_terms, category_terms, False).order_by('-created_at')[:max_results]
-            else:  # all
-                lost_results = apply_filters(lost_base, search_terms, color_terms, category_terms, True).order_by('-created_at')[:max_results]
-                found_results = apply_filters(found_base, search_terms, color_terms, category_terms, False).order_by('-created_at')[:max_results]
-                filtered_results = list(lost_results) + list(found_results)
-        else:
-            filtered_results = initial_results
+        # Combine & limit
+        results = list(lost_qs[:max_results]) + list(found_qs[:max_results])
+        results = sorted(results, key=lambda x: getattr(x, "created_at", 0), reverse=True)
+        results = results[:max_results]
 
-        # --- Serialize filtered results ---
-        lost_data = LostItemSerializer([obj for obj in filtered_results if isinstance(obj, LostItem)], many=True, context={'request': request}).data
-        found_data = FoundItemSerializer([obj for obj in filtered_results if isinstance(obj, FoundItem)], many=True, context={'request': request}).data
+        # Serialize
+        lost_data = LostItemSerializer(
+            [r for r in results if isinstance(r, LostModel)],
+            many=True, context={'request': request}
+        ).data
+
+        found_data = FoundItemSerializer(
+            [r for r in results if isinstance(r, FoundModel)],
+            many=True, context={'request': request}
+        ).data
+
         results_data = lost_data + found_data
+        search_duration = round(time.time() - start_time, 3)
 
-        # --- Serialize initial results ---
-        initial_lost_data = LostItemSerializer([obj for obj in initial_results if isinstance(obj, LostItem)], many=True, context={'request': request}).data
-        initial_found_data = FoundItemSerializer([obj for obj in initial_results if isinstance(obj, FoundItem)], many=True, context={'request': request}).data
-        initial_data = initial_lost_data + initial_found_data
-
-        # --- Log search ---
+        # Save log
         ImageSearchLog.objects.create(
             user=request.user,
             search_type=search_type,
@@ -529,38 +550,33 @@ def manual_image_search(request):
             color_filters=color_filters,
             category_filters=category_filters,
             results_count=len(results_data),
-            search_duration=round(time.time() - start_time, 3)
+            search_duration=search_duration
         )
 
-        # --- Response ---
         return Response({
-            "success": True,
-            "message": f"Found {len(results_data)} item(s)" if results_data else "No items found.",
             "count": len(results_data),
             "results": results_data,
-            "initial_results": initial_data,
+            "message": message if results_data else "No results found.",
             "search_metadata": {
-                "query": search_query or "All Items",
+                "query": search_query or "N/A",
                 "type": search_type,
                 "filters_applied": {
-                    "colors": color_filters or "None",
-                    "categories": category_filters or "None"
+                    "colors": color_filters or "N/A",
+                    "categories": category_filters or "N/A"
                 },
+                "category_exists": bool(matched_category),
                 "results_count": len(results_data),
-                "initial_count": len(initial_data),
-                "search_duration_seconds": round(time.time() - start_time, 3),
-                "max_results": max_results,
-                "is_admin": is_admin
+                "search_duration_seconds": search_duration,
+                "max_results": max_results
             }
-        }, status=200)
+        }, status=status.HTTP_200_OK)
 
     except Exception as e:
-        logger.error(f"Manual image search error: {e}", exc_info=True)
+        # Ensure JSON-safe error
         return Response({
-            "success": False,
-            "message": "An error occurred during search.",
-            "error": str(e)
-        }, status=500)
+            "error": str(e),
+            "message": "An unexpected error occurred during search."
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 #####################################################################################
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -746,5 +762,6 @@ def verify_found_item(request, item_id):
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
 ################################################################################################################################
+
 
 
