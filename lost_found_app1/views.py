@@ -32,28 +32,7 @@ from rest_framework import generics, permissions, status
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action, api_view, permission_classes
 from django.utils import timezone
-import logging
-import traceback
-from rest_framework import viewsets, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from django.contrib.auth import get_user_model
-logger = logging.getLogger(__name__)
-User = get_user_model()
-from .models import *
-from .models import ImageFeature, generate_image_fingerprint, find_similar_images, LostItem, FoundItem
-from django.shortcuts import get_object_or_404
-import numpy as np
-from rest_framework import viewsets, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from lost_found_app1.models import LostItem, FoundItem, Category, ImageSearchLog
-from lost_found_app1.serializers import (
-    LostItemSerializer,
-    FoundItemSerializer,
-    ManualImageSearchSerializer,
-)
+################################################################################################################################
 from .models import (
     User,
     Category,
@@ -63,13 +42,20 @@ from .models import (
     Notification,
     ImageSearchLog   
 )
+################################################################################################################################
 from .serializers import *
-import re
-
+################################
+#####################################################################################
+##############################################################################################################################################################
+#########################################################################################################################################################
 def home(request):
-    context = {}
+    context = {
+        
+    }
+    # Render the HTML template index.html with the data in the context variable
     return render(request, 'home.html', context=context)
-
+###########################################################################################################################################################
+#############################################################################################################################################################
 class AuthViewSet(viewsets.GenericViewSet):
     """
     Authentication ViewSet for user registration and login
@@ -110,7 +96,7 @@ class AuthViewSet(viewsets.GenericViewSet):
                 'phone_number': user.phone_number,
                 'tower_number': user.tower_number,
                 'room_number': user.room_number,
-                'profile_image': user.get_profile_image_url(),
+                'profile_image': user.profile_image.url if user.profile_image else None,
             },
             'tokens': tokens_serializer.get_tokens(user)
         }, status=status.HTTP_201_CREATED)
@@ -130,7 +116,7 @@ class AuthViewSet(viewsets.GenericViewSet):
             'tokens': validated_data['tokens'],
             'redirect_url': validated_data['redirect_url']
         }, status=status.HTTP_200_OK)
-
+###########################################################################
 # Custom Permissions
 class IsOwnerOrAdmin(permissions.BasePermission):
     def has_object_permission(self, request, view, obj):
@@ -143,7 +129,8 @@ class IsOwnerOrAdmin(permissions.BasePermission):
 class IsAdminOnly(permissions.BasePermission):
     def has_permission(self, request, view):
         return request.user.user_type == 'admin'
-
+#################################################################################################################################################
+#################################################################################################################################################
 class UserProfileViewSet(viewsets.GenericViewSet,
                         mixins.RetrieveModelMixin,
                         mixins.UpdateModelMixin):
@@ -155,11 +142,6 @@ class UserProfileViewSet(viewsets.GenericViewSet,
 
     def get_object(self):
         return self.request.user
-
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        context['request'] = self.request
-        return context
 
     @action(detail=False, methods=['get', 'put', 'patch'])
     def me(self, request):
@@ -189,7 +171,11 @@ class UserProfileViewSet(viewsets.GenericViewSet,
                 'message': 'Profile updated successfully!',
                 'user': serializer.data
             }, status=status.HTTP_200_OK)
-
+###########################################################################################################################################################
+######################################################(new update the password update code)#########################################################################
+    ########################################################################
+    # Update Password (requires old password)
+    ########################################################################
     @action(detail=False, methods=['put'], serializer_class=UpdatePasswordSerializer, permission_classes=[])
     def password(self, request):
         """
@@ -203,6 +189,9 @@ class UserProfileViewSet(viewsets.GenericViewSet,
             'message': 'Password updated successfully!'
         }, status=status.HTTP_200_OK)
 
+    ########################################################################
+    # Forgot Password (reset with email only)
+    ########################################################################
     @action(detail=False, methods=['put'], serializer_class=ForgotPasswordSerializer, permission_classes=[])
     def forgot_password(self, request):
         """
@@ -215,7 +204,7 @@ class UserProfileViewSet(viewsets.GenericViewSet,
         return Response({
             'message': 'Password reset successfully!'
         }, status=status.HTTP_200_OK)
-
+    ##################################################################################
     @action(detail=False, methods=['delete'], permission_classes=[IsAuthenticated])
     def delete_account(self, request):
         """
@@ -227,7 +216,8 @@ class UserProfileViewSet(viewsets.GenericViewSet,
         return Response({
             'message': 'Your account has been deleted successfully.'
         }, status=status.HTTP_200_OK)
-
+#########################################################################################################################################################################
+#########################################################################################################################################################################
     @action(detail=False, methods=['get'])
     def details(self, request):
         """
@@ -235,10 +225,13 @@ class UserProfileViewSet(viewsets.GenericViewSet,
         """
         serializer = self.get_serializer(self.get_object())
         return Response(serializer.data, status=status.HTTP_200_OK)
-
+####################################################################################################################################################################
+####################################################################################################################################################################
     def perform_update(self, serializer):
         serializer.save()
-
+#################################################################################################################################################
+#################################################################################################################################################
+# Additional convenience views for backward compatibility
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_current_user(request):
@@ -247,9 +240,9 @@ def get_current_user(request):
     """
     from .serializers import UserProfileSerializer
     user = request.user
-    serializer = UserProfileSerializer(user, context={'request': request})
+    serializer = UserProfileSerializer(user)
     return Response(serializer.data, status=status.HTTP_200_OK)
-
+###############################################################################
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_all_users(request):
@@ -269,421 +262,153 @@ def get_all_users(request):
     if user_type:
         users = users.filter(user_type=user_type)
     
-    serializer = UserListSerializer(users, many=True, context={'request': request})
+    serializer = UserListSerializer(users, many=True)
     return Response({
         'count': users.count(),
         'users': serializer.data
     }, status=status.HTTP_200_OK)
-
+##################################
+#################################################################################################################################################
+#################################################################################################################################################
+#####################################################################################
+# Category ViewSet
 class CategoryViewSet(viewsets.ModelViewSet):
-    """
-    Category management viewset.
-    - All authenticated users can list/retrieve categories.
-    - Only admins can create/update/delete.
-    """
-    queryset = Category.objects.all().order_by('id')
+    queryset = Category.objects.all()
     serializer_class = CategorySerializer
+    permission_classes = [IsAuthenticated]
 
-    def get_permissions(self):
-        if self.action in ['list', 'retrieve']:
-            permission_classes = [IsAuthenticated]
-        else:
-            permission_classes = [IsAuthenticated, IsAdminOnly]
-        return [permission() for permission in permission_classes]
-#################################################################################################################################################################################################################
-#################################################################################################################################################################################################################
+    def list(self, request, *args, **kwargs):
+        # Allow all authenticated users to view categories
+        if request.user.is_authenticated:
+            return super().list(request, *args, **kwargs)
+        return Response({"detail": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
+#################################################################################################################
+#################################################################################################################
+# LostItem ViewSet
 class LostItemViewSet(viewsets.ModelViewSet):
     serializer_class = LostItemSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        """Always return all lost items (not user-based)."""
-        return LostItem.objects.select_related('user', 'category').order_by('-created_at')
+        user = self.request.user
 
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        context['request'] = self.request
-        return context
+        # Admin users see all lost items
+        if user.user_type == 'admin':
+            return LostItem.objects.all()
+
+        # Resident users
+        if user.user_type == 'resident':
+            user_items = LostItem.objects.filter(user=user)
+            if user_items.exists():
+                # If resident has posted before, show only their items
+                return user_items
+            else:
+                # If resident has not posted yet, show all lost items
+                return LostItem.objects.all()
+
+        # Other users can see all items (customize if needed)
+        return LostItem.objects.all()
 
     def perform_create(self, serializer):
+        # Save the current user as the owner of the lost item
         serializer.save(user=self.request.user)
 
-    def create(self, request, *args, **kwargs):
-        try:
-            logger.info(f"Creating lost item for user: {request.user.username}")
-            serializer = self.get_serializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            lost_item = serializer.save()
-
-            response_serializer = LostItemSerializer(lost_item, context={'request': request})
-            return Response({
-                "success": True,
-                "message": "Lost item added successfully!",
-                "data": response_serializer.data
-            }, status=status.HTTP_201_CREATED)
-        except Exception as e:
-            logger.error(f"Error creating lost item: {str(e)}")
-            logger.error(traceback.format_exc())
-            return Response({
-                "success": False,
-                "message": "Failed to create lost item",
-                "error": str(e)
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-    def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
-
-        page = self.paginate_queryset(queryset)
-        serializer = self.get_serializer(page or queryset, many=True)
-
-        if page is not None:
-            return self.get_paginated_response({
-                "success": True,
-                "message": "Lost items retrieved successfully",
-                "data": serializer.data
-            })
-
-        return Response({
-            "success": True,
-            "message": "Lost items retrieved successfully",
-            "count": queryset.count(),
-            "data": serializer.data
-        })
-
     @action(detail=False, methods=['get'])
-    def search(self, request):
-        """Search all lost items"""
-        queryset = LostItem.objects.all()
-        q = request.GET.get('q', '')
-        category = request.GET.get('category', '')
-        color = request.GET.get('color', '')
+    def my_lost_items(self, request):
+        # Return all lost items created by the current user
+        items = LostItem.objects.filter(user=request.user)
+        serializer = self.get_serializer(items, many=True)
+        return Response(serializer.data)
 
-        if q:
-            queryset = queryset.filter(
-                Q(title__icontains=q) |
-                Q(description__icontains=q) |
-                Q(search_tags__icontains=q) |
-                Q(brand__icontains=q) |
-                Q(lost_location__icontains=q)
-            )
-        if category:
-            queryset = queryset.filter(category__name__icontains=category)
-        if color:
-            queryset = queryset.filter(Q(color__icontains=color) | Q(color_tags__icontains=color))
+    @action(detail=True, methods=['post'])
+    def mark_found(self, request, pk=None):
+        # Allow marking item as found if the user owns it or is admin
+        item = self.get_object()
+        if item.user != request.user and request.user.user_type != 'admin':
+            return Response({"detail": "Not authorized."}, status=status.HTTP_403_FORBIDDEN)
+        
+        item.status = 'found'
+        item.save()
+        return Response({"detail": "Item marked as found."})
+#################################################################################################################
 
-        queryset = queryset.order_by('-created_at')
-        serializer = self.get_serializer(queryset, many=True)
-        return Response({
-            "success": True,
-            "message": "Search completed successfully",
-            "count": queryset.count(),
-            "data": serializer.data
-        })
-#################################################################################################################################################################################################################
-#################################################################################################################################################################################################################
-# ========================== FOUND ITEMS ==========================
+#####################################################################################
+# FoundItem ViewSet
 class FoundItemViewSet(viewsets.ModelViewSet):
     serializer_class = FoundItemSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        """Always return all found items (not user-based)."""
-        return FoundItem.objects.select_related('user', 'category').order_by('-created_at')
-
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        context['request'] = self.request
-        return context
+        user = self.request.user
+        if getattr(user, 'user_type', None) == 'admin':
+            return FoundItem.objects.all()
+        return FoundItem.objects.filter(user=user)
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
 
-    def create(self, request, *args, **kwargs):
-        try:
-            logger.info(f"Creating found item for user: {request.user.username}")
-            serializer = self.get_serializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            found_item = serializer.save()
-
-            response_serializer = FoundItemSerializer(found_item, context={'request': request})
-            return Response({
-                "success": True,
-                "message": "Found item added successfully!",
-                "data": response_serializer.data
-            }, status=status.HTTP_201_CREATED)
-        except Exception as e:
-            logger.error(f"Error creating found item: {str(e)}")
-            logger.error(traceback.format_exc())
-            return Response({
-                "success": False,
-                "message": "Failed to create found item",
-                "error": str(e)
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-    def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
-
-        page = self.paginate_queryset(queryset)
-        serializer = self.get_serializer(page or queryset, many=True)
-
-        if page is not None:
-            return self.get_paginated_response({
-                "success": True,
-                "message": "Found items retrieved successfully",
-                "data": serializer.data
-            })
-
-        return Response({
-            "success": True,
-            "message": "Found items retrieved successfully",
-            "count": queryset.count(),
-            "data": serializer.data
-        })
-
     @action(detail=False, methods=['get'])
-    def search(self, request):
-        """Search all found items"""
-        queryset = FoundItem.objects.all()
-        q = request.GET.get('q', '')
-        category = request.GET.get('category', '')
-        color = request.GET.get('color', '')
-        status_filter = request.GET.get('status', '')
-
-        if q:
-            queryset = queryset.filter(
-                Q(title__icontains=q) |
-                Q(description__icontains=q) |
-                Q(search_tags__icontains=q) |
-                Q(brand__icontains=q) |
-                Q(found_location__icontains=q)
-            )
-        if category:
-            queryset = queryset.filter(category__name__icontains=category)
-        if color:
-            queryset = queryset.filter(Q(color__icontains=color) | Q(color_tags__icontains=color))
-        if status_filter:
-            queryset = queryset.filter(status=status_filter)
-
-        queryset = queryset.order_by('-created_at')
-        serializer = self.get_serializer(queryset, many=True)
-        return Response({
-            "success": True,
-            "message": "Search completed successfully",
-            "count": queryset.count(),
-            "data": serializer.data
-        })
+    def my_found_items(self, request):
+        items = FoundItem.objects.filter(user=request.user)
+        serializer = self.get_serializer(items, many=True)
+        return Response(serializer.data)
 
     @action(detail=True, methods=['post'])
     def mark_returned(self, request, pk=None):
-        """Mark item as returned"""
-        try:
-            item = self.get_object()
-            item.status = 'returned'
-            item.save()
-            return Response({
-                "success": True,
-                "message": "Item marked as returned successfully."
-            }, status=status.HTTP_200_OK)
-        except Exception as e:
-            logger.error(f"Error marking item as returned: {str(e)}")
-            return Response({
-                "success": False,
-                "message": "Failed to mark item as returned.",
-                "error": str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-#################################################################################################################################################################################################################
-####################################################################################################################################################################################################
-# Add these missing ViewSets to your views.py after the FoundItemViewSet
+        item = self.get_object()
+        user = request.user
+        if item.user != user and getattr(user, 'user_type', None) != 'admin':
+            return Response({"detail": "Not authorized."}, status=status.HTTP_403_FORBIDDEN)
+        item.status = 'returned'
+        item.save()
+        return Response({"detail": "Item marked as returned."})
+
+
+#####################################################################################
 class ClaimViewSet(viewsets.ModelViewSet):
-    """
-    Claim management viewset
-    """
     serializer_class = ClaimSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        """Users can only see their own claims, admins can see all"""
         user = self.request.user
         if user.user_type == 'admin':
-            return Claim.objects.select_related('user', 'found_item').order_by('-created_at')
-        return Claim.objects.filter(user=user).select_related('user', 'found_item').order_by('-created_at')
-
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        context['request'] = self.request
-        return context
-
-    def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
-
-    def create(self, request, *args, **kwargs):
-        try:
-            serializer = self.get_serializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            claim = serializer.save()
-
-            # Create notification for admin
-            admin_users = User.objects.filter(user_type='admin')
-            for admin in admin_users:
-                Notification.objects.create(
-                    user=admin,
-                    notification_type='claim_update',
-                    title='New Claim Submitted',
-                    message=f'A new claim has been submitted by {request.user.username} for item "{claim.found_item.title}".',
-                    claim=claim
-                )
-
-            response_serializer = ClaimSerializer(claim, context={'request': request})
-            return Response({
-                "success": True,
-                "message": "Claim submitted successfully!",
-                "data": response_serializer.data
-            }, status=status.HTTP_201_CREATED)
-        except Exception as e:
-            logger.error(f"Error creating claim: {str(e)}")
-            return Response({
-                "success": False,
-                "message": "Failed to submit claim",
-                "error": str(e)
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminOnly])
-    def approve(self, request, pk=None):
-        """Approve a claim (admin only)"""
-        try:
-            claim = self.get_object()
-            claim.status = 'approved'
-            claim.resolved_at = timezone.now()
-            claim.save()
-
-            # Update found item status
-            claim.found_item.status = 'returned'
-            claim.found_item.save()
-
-            # Create notification for user
-            Notification.objects.create(
-                user=claim.user,
-                notification_type='claim_update',
-                title='Claim Approved',
-                message=f'Your claim for "{claim.found_item.title}" has been approved!',
-                claim=claim
-            )
-
-            return Response({
-                "success": True,
-                "message": "Claim approved successfully!"
-            }, status=status.HTTP_200_OK)
-        except Exception as e:
-            logger.error(f"Error approving claim: {str(e)}")
-            return Response({
-                "success": False,
-                "message": "Failed to approve claim",
-                "error": str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminOnly])
-    def reject(self, request, pk=None):
-        """Reject a claim (admin only)"""
-        try:
-            claim = self.get_object()
-            claim.status = 'rejected'
-            claim.resolved_at = timezone.now()
-            claim.save()
-
-            # Create notification for user
-            Notification.objects.create(
-                user=claim.user,
-                notification_type='claim_update',
-                title='Claim Rejected',
-                message=f'Your claim for "{claim.found_item.title}" has been rejected.',
-                claim=claim
-            )
-
-            return Response({
-                "success": True,
-                "message": "Claim rejected successfully!"
-            }, status=status.HTTP_200_OK)
-        except Exception as e:
-            logger.error(f"Error rejecting claim: {str(e)}")
-            return Response({
-                "success": False,
-                "message": "Failed to reject claim",
-                "error": str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-#################################################################################################################################################################################################################
-############################################################################################################################################################################################################
+            return Claim.objects.all()
+        return Claim.objects.filter(user=user)
+#####################################################################################
+# Notification ViewSet
 class NotificationViewSet(viewsets.ModelViewSet):
-    """
-    Notification management viewset
-    """
     serializer_class = NotificationSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        """Users can only see their own notifications"""
-        return Notification.objects.filter(user=self.request.user).order_by('-created_at')
+        return Notification.objects.filter(user=self.request.user)
 
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        context['request'] = self.request
-        return context
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
 
     @action(detail=False, methods=['get'])
-    def unread(self, request):
-        """Get unread notifications"""
-        unread_notifications = self.get_queryset().filter(is_read=False)
-        serializer = self.get_serializer(unread_notifications, many=True)
-        return Response({
-            "success": True,
-            "count": unread_notifications.count(),
-            "data": serializer.data
-        })
+    def unread_count(self, request):
+        count = Notification.objects.filter(user=request.user, is_read=False).count()
+        return Response({"unread_count": count})
 
     @action(detail=True, methods=['post'])
     def mark_read(self, request, pk=None):
-        """Mark notification as read"""
-        try:
-            notification = self.get_object()
-            notification.is_read = True
-            notification.save()
-            return Response({
-                "success": True,
-                "message": "Notification marked as read"
-            })
-        except Exception as e:
-            logger.error(f"Error marking notification as read: {str(e)}")
-            return Response({
-                "success": False,
-                "message": "Failed to mark notification as read",
-                "error": str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        notification = self.get_object()
+        notification.is_read = True
+        notification.save()
+        return Response({"detail": "Notification marked as read."})
 
     @action(detail=False, methods=['post'])
     def mark_all_read(self, request):
-        """Mark all notifications as read"""
-        try:
-            updated_count = self.get_queryset().filter(is_read=False).update(is_read=True)
-            return Response({
-                "success": True,
-                "message": f"Marked {updated_count} notifications as read"
-            })
-        except Exception as e:
-            logger.error(f"Error marking all notifications as read: {str(e)}")
-            return Response({
-                "success": False,
-                "message": "Failed to mark notifications as read",
-                "error": str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-########################################################################################################################################################################################################
+        Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
+        return Response({"detail": "All notifications marked as read."})
+#####################################################################################
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def manual_image_search(request):
-    """
-    Enhanced Manual Image Search API
-    - When first loaded: shows ALL Lost and Found items
-    - After filters: shows filtered results
-    - Works for both admin and regular users
-    """
+    import re, time
+    from django.db.models import Q
+
     start_time = time.time()
 
     try:
@@ -691,91 +416,99 @@ def manual_image_search(request):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
+        # --- Extract parameters ---
         search_query = data.get('search_query', '').strip()
         search_type = data.get('search_type', 'all').lower()
         color_filters = data.get('color_filters', '').strip()
         category_filters = data.get('category_filters', '').strip()
         max_results = data.get('max_results', 100)
 
-        # Base QuerySets
-        lost_base = LostItem.objects.select_related('category', 'user').all()
-        found_base = FoundItem.objects.select_related('category', 'user').all()
+        # --- Split filters ---
+        search_terms = [s.strip().lower() for s in re.split(r'[, ]+', search_query) if s.strip()]
+        color_terms = [c.strip().lower() for c in re.split(r'[, ]+', color_filters) if c.strip()]
+        category_terms = [c.strip().lower() for c in re.split(r'[, ]+', category_filters) if c.strip()]
 
-        # Apply filters function
+        # --- Admin check ---
+        is_admin = request.user.is_staff or request.user.is_superuser
+
+        # --- Base QuerySets ---
+        if is_admin:
+            lost_base = LostItem.objects.select_related('category', 'user').all()
+            found_base = FoundItem.objects.select_related('category', 'user').all()
+        else:
+            lost_base = LostItem.objects.select_related('category', 'user').filter(user=request.user)
+            found_base = FoundItem.objects.select_related('category', 'user').filter(user=request.user)
+
+        # --- Filtering function ---
         def apply_filters(qs, search_terms, color_terms, category_terms, is_lost=True):
-            if not search_terms and not color_terms and not category_terms:
-                # No filters — return all items
-                return qs
-
             q_objects = Q()
 
-            # Text-based search
+            # Search terms
             for term in search_terms:
                 q_objects |= (
                     Q(title__icontains=term) |
                     Q(description__icontains=term) |
                     Q(search_tags__icontains=term) |
+                    Q(color_tags__icontains=term) |
+                    Q(material_tags__icontains=term) |
                     Q(brand__icontains=term) |
-                    Q(color__icontains=term)
+                    Q(color__icontains=term) |
+                    Q(size__icontains=term)
                 )
                 if is_lost:
                     q_objects |= Q(lost_location__icontains=term)
                 else:
                     q_objects |= Q(found_location__icontains=term)
 
-            # Color filter
+            # Color filters (optional)
             if color_terms:
                 color_q = Q()
                 for color_term in color_terms:
-                    color_q |= Q(color__icontains=color_term) | Q(color_tags__icontains=color_term)
+                    color_q |= Q(color_tags__icontains=color_term) | Q(color__icontains=color_term)
                 q_objects &= color_q
 
-            # Category filter
+            # Category filter (strict)
             if category_terms:
                 category_q = Q()
                 for cat_term in category_terms:
-                    category_q |= Q(category__name__icontains=cat_term)
+                    category_q |= Q(category__name__iexact=cat_term)
                 q_objects &= category_q
 
             return qs.filter(q_objects).distinct()
 
-        # Split filters
-        search_terms = [s.strip().lower() for s in search_query.split(',') if s.strip()]
-        color_terms = [c.strip().lower() for c in color_filters.split(',') if c.strip()]
-        category_terms = [c.strip().lower() for c in category_filters.split(',') if c.strip()]
+        # --- STEP 1: Initial results (before search) strictly by type ---
+        if search_type == 'lost':
+            initial_results = list(lost_base.order_by('-created_at')[:max_results])
+        elif search_type == 'found':
+            initial_results = list(found_base.order_by('-created_at')[:max_results])
+        else:  # all
+            initial_results = list(lost_base.order_by('-created_at')[:max_results]) + \
+                              list(found_base.order_by('-created_at')[:max_results])
 
-        # Get results (show all if no filters)
-        lost_results = []
-        found_results = []
+        # --- STEP 2: Apply filters ---
+        if search_terms or color_terms or category_terms:
+            if search_type == 'lost':
+                filtered_results = apply_filters(lost_base, search_terms, color_terms, category_terms, is_lost=True).order_by('-created_at')[:max_results]
+            elif search_type == 'found':
+                filtered_results = apply_filters(found_base, search_terms, color_terms, category_terms, is_lost=False).order_by('-created_at')[:max_results]
+            else:  # all
+                lost_results = apply_filters(lost_base, search_terms, color_terms, category_terms, is_lost=True).order_by('-created_at')[:max_results]
+                found_results = apply_filters(found_base, search_terms, color_terms, category_terms, is_lost=False).order_by('-created_at')[:max_results]
+                filtered_results = list(lost_results) + list(found_results)
+        else:
+            filtered_results = initial_results  # if no filters, show initial results
 
-        if search_type in ['all', 'lost']:
-            lost_results = apply_filters(lost_base, search_terms, color_terms, category_terms, is_lost=True)
-            if search_terms or color_terms or category_terms:
-                lost_results = lost_results[:max_results]
-
-        if search_type in ['all', 'found']:
-            found_results = apply_filters(found_base, search_terms, color_terms, category_terms, is_lost=False)
-            if search_terms or color_terms or category_terms:
-                found_results = found_results[:max_results]
-
-        # Combine & sort
-        all_results = list(lost_results) + list(found_results)
-        all_results.sort(key=lambda x: x.created_at, reverse=True)
-
-        # Serialize results
-        lost_data = LostItemSerializer(
-            [obj for obj in all_results if isinstance(obj, LostItem)],
-            many=True, context={'request': request}
-        ).data
-
-        found_data = FoundItemSerializer(
-            [obj for obj in all_results if isinstance(obj, FoundItem)],
-            many=True, context={'request': request}
-        ).data
-
+        # --- Serialize filtered results ---
+        lost_data = LostItemSerializer([obj for obj in filtered_results if isinstance(obj, LostItem)], many=True, context={'request': request}).data
+        found_data = FoundItemSerializer([obj for obj in filtered_results if isinstance(obj, FoundItem)], many=True, context={'request': request}).data
         results_data = lost_data + found_data
 
-        # Log
+        # --- Serialize initial results ---
+        initial_lost_data = LostItemSerializer([obj for obj in initial_results if isinstance(obj, LostItem)], many=True, context={'request': request}).data
+        initial_found_data = FoundItemSerializer([obj for obj in initial_results if isinstance(obj, FoundItem)], many=True, context={'request': request}).data
+        initial_data = initial_lost_data + initial_found_data
+
+        # --- Log search ---
         ImageSearchLog.objects.create(
             user=request.user,
             search_type=search_type,
@@ -786,23 +519,27 @@ def manual_image_search(request):
             search_duration=round(time.time() - start_time, 3)
         )
 
-        # Response
+        # --- Response ---
         return Response({
             "success": True,
             "message": f"Found {len(results_data)} item(s)" if results_data else "No items found.",
             "count": len(results_data),
             "results": results_data,
+            "initial_results": initial_data,
             "search_metadata": {
-                "query": search_query,
+                "query": search_query or "All Items",
                 "type": search_type,
                 "filters_applied": {
-                    "colors": color_filters,
-                    "categories": category_filters
+                    "colors": color_filters or "None",
+                    "categories": category_filters or "None"
                 },
                 "results_count": len(results_data),
-                "search_duration_seconds": round(time.time() - start_time, 3)
+                "initial_count": len(initial_data),
+                "search_duration_seconds": round(time.time() - start_time, 3),
+                "max_results": max_results,
+                "is_admin": is_admin
             }
-        }, status=status.HTTP_200_OK)
+        }, status=200)
 
     except Exception as e:
         logger.error(f"Manual image search error: {e}", exc_info=True)
@@ -810,78 +547,72 @@ def manual_image_search(request):
             "success": False,
             "message": "An error occurred during search.",
             "error": str(e)
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-####################################################################################################################################################################################################################
+        }, status=500)
+#####################################################################################
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def user_dashboard(request):
-    """
-    User dashboard for residents.
-    Shows only the user's own Lost & Found items and related stats.
-    """
+    """User dashboard statistics and recent activities"""
     user = request.user
 
-    # Base statistics
+    # Basic stats for the logged-in user
     stats = {
         'total_lost_items': LostItem.objects.filter(user=user).count(),
         'total_found_items': FoundItem.objects.filter(user=user).count(),
         'total_claims': Claim.objects.filter(user=user).count(),
         'pending_claims': Claim.objects.filter(user=user, status='pending').count(),
         'approved_claims': Claim.objects.filter(user=user, status='approved').count(),
-        'unread_notifications': Notification.objects.filter(user=user, is_read=False).count(),
+        # Remove total_users if not needed for user-level dashboard
+        # 'total_users': User.objects.count()  # <- Only include if serializer expects it
     }
 
     # Recent activities
+    recent_lost = LostItem.objects.filter(user=user).order_by('-created_at')[:5]
+    recent_found = FoundItem.objects.filter(user=user).order_by('-created_at')[:5]
+    recent_claims = Claim.objects.filter(user=user).order_by('-created_at')[:5]
+
     recent_activities = []
 
-    user_lost_items = LostItem.objects.filter(user=user).order_by('-created_at')
-    user_found_items = FoundItem.objects.filter(user=user).order_by('-created_at')
-    user_claims = Claim.objects.filter(user=user).order_by('-created_at')
+    for item in recent_lost:
+        recent_activities.append({
+            'type': 'lost_item',
+            'title': item.title,
+            'status': item.status,
+            'date': item.created_at,
+            'id': item.id
+        })
 
-    # Only include if user has items
-    if user_lost_items.exists():
-        for item in user_lost_items[:5]:
-            recent_activities.append({
-                'type': 'lost_item',
-                'title': item.title,
-                'status': item.status,
-                'date': item.created_at,
-                'id': item.id
-            })
+    for item in recent_found:
+        recent_activities.append({
+            'type': 'found_item',
+            'title': item.title,
+            'status': item.status,
+            'date': item.created_at,
+            'id': item.id
+        })
 
-    if user_found_items.exists():
-        for item in user_found_items[:5]:
-            recent_activities.append({
-                'type': 'found_item',
-                'title': item.title,
-                'status': item.status,
-                'date': item.created_at,
-                'id': item.id
-            })
+    for claim in recent_claims:
+        recent_activities.append({
+            'type': 'claim',
+            'title': f"Claim for {claim.found_item.title}" if claim.found_item else "Claim",
+            'status': claim.status,
+            'date': claim.created_at,
+            'id': claim.id
+        })
 
-    if user_claims.exists():
-        for claim in user_claims[:5]:
-            recent_activities.append({
-                'type': 'claim',
-                'title': f"Claim for {claim.found_item.title}" if claim.found_item else "Claim",
-                'status': claim.status,
-                'date': claim.created_at,
-                'id': claim.id
-            })
+    # Sort activities by most recent
+    recent_activities.sort(key=lambda x: x['date'], reverse=True)
+    recent_activities = recent_activities[:10]
 
-    # Sort activities (latest first)
-    if recent_activities:
-        recent_activities.sort(key=lambda x: x['date'], reverse=True)
-        stats['recent_activities'] = recent_activities[:10]
-    else:
-        stats['recent_activities'] = []
+    stats['recent_activities'] = recent_activities
+    stats['unread_notifications'] = Notification.objects.filter(user=user, is_read=False).count()
 
-    # Serializer output
+    # ✅ Safe serializer call (for dict data, use `data=` instead of `instance=`)
     serializer = DashboardStatsSerializer(data=stats)
     serializer.is_valid(raise_exception=False)
 
     return Response(serializer.data)
-####################################################################################################################################################################################################################
+#####################################################################################
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, IsAdminOnly])
 def admin_dashboard(request):
@@ -957,7 +688,8 @@ def admin_dashboard(request):
     
     serializer = AdminDashboardStatsSerializer(stats)
     return Response(serializer.data)
-####################################################################################################################################################################################################################
+
+#####################################################################################
 # Item Verification APIs (Admin only)
 @api_view(['POST'])
 @permission_classes([IsAuthenticated, IsAdminOnly])
@@ -979,7 +711,7 @@ def verify_lost_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except LostItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
-####################################################################################################################################################################################################################
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated, IsAdminOnly])
 def verify_found_item(request, item_id):
@@ -1000,168 +732,4 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
-####################################################################################################################################################################################################################
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def image_based_search(request):
-    """
-    Upload an image and find visually similar lost/found items using custom fingerprint algorithm.
-    """
-    try:
-        # Validate request data
-        serializer = ImageSearchRequestSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response({
-                "success": False,
-                "message": "Invalid request data",
-                "errors": serializer.errors
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        uploaded_image = serializer.validated_data['image']
-        search_type = serializer.validated_data['search_type']
-        max_results = serializer.validated_data['max_results']
-
-        # Find similar images using custom algorithm
-        similar_images = find_similar_images(uploaded_image, search_type, max_results)
-        
-        if not similar_images:
-            return Response({
-                "success": True,
-                'search_metadata': {
-                    'search_type': search_type,
-                    'results_count': 0,
-                    'message': 'No similar items found'
-                },
-                'results': []
-            }, status=status.HTTP_200_OK)
-
-        # Prepare response data
-        results_data = []
-        lost_item_ids = []
-        found_item_ids = []
-        
-        # Separate item IDs by type
-        for result in similar_images:
-            if result['item_type'] == 'lost':
-                lost_item_ids.append(result['item_id'])
-            else:
-                found_item_ids.append(result['item_id'])
-        
-        # Fetch complete item data
-        lost_items = LostItem.objects.filter(id__in=lost_item_ids)
-        found_items = FoundItem.objects.filter(id__in=found_item_ids)
-        
-        # Create item mapping for easy lookup
-        items_map = {}
-        for item in lost_items:
-            items_map[('lost', item.id)] = item
-        for item in found_items:
-            items_map[('found', item.id)] = item
-        
-        # Build final results with complete item data
-        for result in similar_images:
-            item_key = (result['item_type'], result['item_id'])
-            if item_key in items_map:
-                item = items_map[item_key]
-                
-                if result['item_type'] == 'lost':
-                    item_serializer = LostItemSerializer(item, context={'request': request})
-                else:
-                    item_serializer = FoundItemSerializer(item, context={'request': request})
-                
-                results_data.append({
-                    'item_type': result['item_type'],
-                    'item_id': result['item_id'],
-                    'similarity_score': result['similarity_score'],
-                    'item_data': item_serializer.data,
-                    'feature_data': ImageFeatureSerializer(result['feature']).data
-                })
-
-        # Sort by similarity score (already sorted by the function, but ensure order)
-        results_data.sort(key=lambda x: x['similarity_score'], reverse=True)
-
-        return Response({
-            "success": True,
-            'search_metadata': {
-                'search_type': search_type,
-                'results_count': len(results_data),
-                'min_score': min([r['similarity_score'] for r in results_data]) if results_data else 0,
-                'max_score': max([r['similarity_score'] for r in results_data]) if results_data else 0
-            },
-            'results': results_data
-        }, status=status.HTTP_200_OK)
-
-    except Exception as e:
-        logger.error(f"Image based search error: {str(e)}")
-        logger.error(traceback.format_exc())
-        return Response({
-            "success": False,
-            "message": "An error occurred during image search",
-            "error": str(e)
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-####################################################################################################################################################################################################################
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def get_image_features(request, item_type, item_id):
-    """
-    Get image features for a specific item
-    """
-    try:
-        feature = ImageFeature.objects.get(item_type=item_type, item_id=item_id)
-        serializer = ImageFeatureSerializer(feature)
-        return Response(serializer.data)
-    except ImageFeature.DoesNotExist:
-        return Response(
-            {"error": "Image features not found for this item"}, 
-            status=status.HTTP_404_NOT_FOUND
-        )
-####################################################################################################################################################################################################################
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def regenerate_image_features(request, item_type, item_id):
-    """
-    Regenerate image features for a specific item
-    """
-    # Determine which model to use based on item_type
-    if item_type == 'lost':
-        model_class = LostItem
-    elif item_type == 'found':
-        model_class = FoundItem
-    else:
-        return Response(
-            {"error": "Invalid item type"}, 
-            status=status.HTTP_400_BAD_REQUEST
-        )
-    
-    # Get the item
-    item = get_object_or_404(model_class, id=item_id)
-    
-    if not item.item_image:
-        return Response(
-            {"error": "Item has no image"}, 
-            status=status.HTTP_400_BAD_REQUEST
-        )
-    
-    fingerprint = generate_image_fingerprint(item.item_image)
-    if fingerprint:
-        ImageFeature.objects.update_or_create(
-            item_type=item_type,
-            item_id=item_id,
-            defaults=fingerprint
-        )
-        
-        # Return updated features
-        feature = ImageFeature.objects.get(item_type=item_type, item_id=item_id)
-        serializer = ImageFeatureSerializer(feature)
-        return Response({
-            "message": "Image features regenerated successfully",
-            "features": serializer.data
-        })
-    else:
-        return Response(
-            {"error": "Failed to generate image features"}, 
-            status=status.HTTP_400_BAD_REQUEST
-        )
-
-
-
+################################################################################################################################
