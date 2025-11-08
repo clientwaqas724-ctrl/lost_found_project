@@ -326,7 +326,7 @@ class CategorySerializer(serializers.ModelSerializer):
         model = Category
         fields = ['id', 'name', 'description', 'created_at']
         read_only_fields = ['id', 'created_at']
-
+####################################################################################################################################################################################################################
 class LostItemSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
     user_id = serializers.UUIDField(source='user.id', read_only=True)
@@ -369,7 +369,7 @@ class LostItemSerializer(serializers.ModelSerializer):
         if request and request.user.is_authenticated:
             validated_data['user'] = request.user
         return super().create(validated_data)
-
+####################################################################################################################################################################################################################
 class FoundItemSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
     user_id = serializers.UUIDField(source='user.id', read_only=True)
@@ -420,7 +420,7 @@ class FoundItemSerializer(serializers.ModelSerializer):
         if request and request.user.is_authenticated:
             validated_data['user'] = request.user
         return super().create(validated_data)
-
+####################################################################################################################################################################################################################
 class ClaimSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
     user_email = serializers.EmailField(source='user.email', read_only=True)
@@ -542,3 +542,4 @@ class ImageSearchRequestSerializer(serializers.Serializer):
     image = serializers.ImageField()
     search_type = serializers.ChoiceField(choices=['lost', 'found', 'both'], default='both')
     max_results = serializers.IntegerField(default=10, min_value=1, max_value=50)
+
