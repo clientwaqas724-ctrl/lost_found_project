@@ -24,7 +24,7 @@ router.register(r'profile', views.UserProfileViewSet, basename='profile')
 router1.register(r'categories', CategoryViewSet, basename='category')
 router1.register(r'lost-items', LostItemViewSet, basename='lostitem')
 router1.register(r'found-items', FoundItemViewSet, basename='founditem')
-router1.register(r'claims',ClaimViewSet, basename='claim')
+router1.register(r'claims', ClaimViewSet, basename='claim')
 router1.register(r'notifications', NotificationViewSet, basename='notification')
 ################################################################################################
 urlpatterns = [  
@@ -53,5 +53,4 @@ urlpatterns = [
 
 
 ]
-
 
