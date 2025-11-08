@@ -14,6 +14,7 @@ from .views import (
     verify_lost_item,
     verify_found_item,
     # image_based_search
+    MyItemsView
 )
 # Create router and register viewsets
 router= DefaultRouter()
@@ -44,6 +45,7 @@ urlpatterns = [
     path('search/manual-image/', manual_image_search, name='manual-image-search'),
     ######################################################################################################
     # path('image-based-search/', image_based_search, name='image_based_search'),
+    path('my-items/', MyItemsView.as_view(), name='my-items'),
     ########################################################################################################################
     #Admin Verification URLs
     path('admin/verify/lost-item/<uuid:item_id>/', verify_lost_item, name='verify-lost-item'),
@@ -53,4 +55,5 @@ urlpatterns = [
 
 
 ]
+
 
