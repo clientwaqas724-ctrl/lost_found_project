@@ -522,18 +522,17 @@ class ManualImageSearchSerializer(serializers.Serializer):
     search_type = serializers.ChoiceField(
         choices=[('lost', 'Lost Items'), ('found', 'Found Items'), ('all', 'All')],
         required=False,
-        default='all',
-        allow_blank=True  # ✅ Add this line to allow empty strings
+        allow_blank=True  # ✅ Allows "" without throwing validation error
     )
     color_filters = serializers.CharField(required=False, allow_blank=True)
     category_filters = serializers.CharField(required=False, allow_blank=True)
     max_results = serializers.IntegerField(default=50, min_value=1, max_value=100)
 
     def validate_search_type(self, value):
-        # ✅ Add this method to convert empty string to default 'all'
-        if value == '':
-            return 'all'
-        return value
+        """Normalize blank or None values safely."""
+        if value in [None, '', ' ']:
+            return None
+        return value.lower()
 #################################################################################################################################################
 class DashboardStatsSerializer(serializers.Serializer):
     total_lost_items = serializers.IntegerField()
@@ -551,6 +550,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
 ######################################################################################################
+
 
 
 
