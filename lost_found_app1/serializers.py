@@ -8,6 +8,7 @@ from urllib.request import urlopen
 from urllib.parse import urlparse
 import os
 import uuid
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 ###################################################################################################################################################################################################
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(
@@ -627,5 +628,6 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     claimed_items = serializers.IntegerField()
 
     user_registrations_today = serializers.IntegerField()
+
 
 
