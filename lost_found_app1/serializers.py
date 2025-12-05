@@ -376,47 +376,53 @@ class UserItemsSerializer(serializers.Serializer):
 ###################################################################################################################################################################################################
 class ClaimSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
-    user_info = serializers.SerializerMethodField()
+    
+    # For backward compatibility with existing API response
+    user_email = serializers.SerializerMethodField()
+    
+    # 🔥 For Android app that expects 'userEmail' (camelCase)
+    userEmail = serializers.SerializerMethodField()
+    
     found_item_id = serializers.UUIDField(write_only=True, required=True)
     found_item_title = serializers.CharField(source='found_item.title', read_only=True)
-    found_item_owner = serializers.SerializerMethodField()
-    proof_of_ownership = serializers.CharField(allow_blank=True, required=False)
-
-    # 🔥 FIX: Android expects this field!
-    userEmail = serializers.SerializerMethodField()
-
+    found_item_image = serializers.SerializerMethodField()
+    found_item = serializers.SerializerMethodField(read_only=True)
+    
     class Meta:
         model = Claim
         fields = [
-            'id', 'user', 'userEmail', 'user_info', 'found_item_id', 'found_item_title',
-            'found_item_owner', 'claim_description', 'proof_of_ownership', 'supporting_images',
-            'status', 'admin_notes', 'created_at', 'updated_at', 'resolved_at'
+            'id', 'user', 'user_email', 'userEmail', 'found_item', 'found_item_id', 
+            'found_item_title', 'found_item_image', 'claim_description', 
+            'proof_of_ownership', 'supporting_images', 'status', 'admin_notes', 
+            'created_at', 'updated_at', 'resolved_at'
         ]
         read_only_fields = [
-            'id', 'user', 'userEmail', 'found_item_title',
-            'found_item_owner', 'status', 'created_at', 'updated_at', 'resolved_at'
+            'id', 'user', 'user_email', 'userEmail', 'found_item', 'found_item_title',
+            'found_item_image', 'status', 'created_at', 'updated_at', 'resolved_at'
         ]
+        extra_kwargs = {
+            'found_item_id': {'write_only': True},
+        }
 
+    def get_user_email(self, obj):
+        if obj.user and obj.user.email:
+            return obj.user.email
+        return ""
+
+    # Alias for Android compatibility
     def get_userEmail(self, obj):
-        # return NON-NULL value to prevent crash
-        return obj.user.email or ""
+        return self.get_user_email(obj)
 
-    def get_user_info(self, obj):
-        return {
-            "id": obj.user.id,
-            "username": obj.user.username,
-            "email": obj.user.email,
-            "phone_number": obj.user.phone_number,
-            "tower_number": obj.user.tower_number,
-            "room_number": obj.user.room_number
-        }
+    def get_found_item(self, obj):
+        return str(obj.found_item.id) if obj.found_item else ""
 
-    def get_found_item_owner(self, obj):
-        return {
-            "username": obj.found_item.user.username,
-            "email": obj.found_item.user.email,
-            "phone_number": obj.found_item.user.phone_number
-        }
+    def get_found_item_image(self, obj):
+        request = self.context.get('request')
+        if obj.found_item and obj.found_item.item_image:
+            if request:
+                return request.build_absolute_uri(obj.found_item.item_image.url)
+            return obj.found_item.item_image.url
+        return None
 
     def validate(self, attrs):
         found_item_id = attrs.get('found_item_id')
@@ -442,6 +448,7 @@ class ClaimSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         user = self.context['request'].user
         found_item = validated_data.pop('found_item')
+        validated_data.pop('found_item_id', None)
 
         claim = Claim.objects.create(
             user=user,
@@ -572,3 +579,4 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     claimed_items = serializers.IntegerField()
 
     user_registrations_today = serializers.IntegerField()
+
