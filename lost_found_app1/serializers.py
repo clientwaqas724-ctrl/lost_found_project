@@ -376,40 +376,42 @@ class UserItemsSerializer(serializers.Serializer):
 ###################################################################################################################################################################################################
 class ClaimSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
-    
-    # For backward compatibility with existing API response
+
+    # Backward compatibility
     user_email = serializers.SerializerMethodField()
-    
-    # 🔥 For Android app that expects 'userEmail' (camelCase)
+
+    # Android camelCase compatibility
     userEmail = serializers.SerializerMethodField()
-    
-    found_item_id = serializers.UUIDField(write_only=True, required=True)
+
+    # Only required during create, NOT during update
+    found_item_id = serializers.UUIDField(write_only=True, required=False)
+
     found_item_title = serializers.CharField(source='found_item.title', read_only=True)
     found_item_image = serializers.SerializerMethodField()
     found_item = serializers.SerializerMethodField(read_only=True)
-    
+
     class Meta:
         model = Claim
         fields = [
-            'id', 'user', 'user_email', 'userEmail', 'found_item', 'found_item_id', 
-            'found_item_title', 'found_item_image', 'claim_description', 
-            'proof_of_ownership', 'supporting_images', 'status', 'admin_notes', 
+            'id', 'user', 'user_email', 'userEmail', 'found_item', 'found_item_id',
+            'found_item_title', 'found_item_image', 'claim_description',
+            'proof_of_ownership', 'supporting_images', 'status', 'admin_notes',
             'created_at', 'updated_at', 'resolved_at'
         ]
+
         read_only_fields = [
-            'id', 'user', 'user_email', 'userEmail', 'found_item', 'found_item_title',
-            'found_item_image', 'status', 'created_at', 'updated_at', 'resolved_at'
+            'id', 'user', 'user_email', 'userEmail', 'found_item',
+            'found_item_title', 'found_item_image', 'status',
+            'created_at', 'updated_at', 'resolved_at'
         ]
-        extra_kwargs = {
-            'found_item_id': {'write_only': True},
-        }
+
+    # -------------------------
+    #     HELPER FIELDS
+    # -------------------------
 
     def get_user_email(self, obj):
-        if obj.user and obj.user.email:
-            return obj.user.email
-        return ""
+        return obj.user.email if obj.user and obj.user.email else ""
 
-    # Alias for Android compatibility
     def get_userEmail(self, obj):
         return self.get_user_email(obj)
 
@@ -424,29 +426,63 @@ class ClaimSerializer(serializers.ModelSerializer):
             return obj.found_item.item_image.url
         return None
 
-    def validate(self, attrs):
-        found_item_id = attrs.get('found_item_id')
-        request = self.context.get('request')
+    # -------------------------
+    #     VALIDATION
+    # -------------------------
 
+    def validate(self, attrs):
+        request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             raise serializers.ValidationError("Authentication required.")
 
-        try:
-            found_item = FoundItem.objects.get(id=found_item_id)
-        except FoundItem.DoesNotExist:
-            raise serializers.ValidationError({"found_item_id": "Found item does not exist."})
+        is_create = self.instance is None
+        found_item_id = attrs.get('found_item_id')
 
-        if found_item.user == request.user:
-            raise serializers.ValidationError({"detail": "You cannot claim your own found item."})
+        # -------------------------
+        #   CREATE CLAIM ONLY
+        # -------------------------
+        if is_create:
+            if not found_item_id:
+                raise serializers.ValidationError({
+                    "found_item_id": "This field is required."
+                })
 
-        if Claim.objects.filter(user=request.user, found_item=found_item).exists():
-            raise serializers.ValidationError({"detail": "You have already submitted a claim for this item."})
+            # Check if found item exists
+            try:
+                found_item = FoundItem.objects.get(id=found_item_id)
+            except FoundItem.DoesNotExist:
+                raise serializers.ValidationError({
+                    "found_item_id": "Found item does not exist."
+                })
 
-        attrs['found_item'] = found_item
+            # Cannot claim your own item
+            if found_item.user == request.user:
+                raise serializers.ValidationError({
+                    "detail": "You cannot claim your own found item."
+                })
+
+            # Prevent duplicate claims
+            if Claim.objects.filter(user=request.user, found_item=found_item).exists():
+                raise serializers.ValidationError({
+                    "detail": "You have already submitted a claim for this item."
+                })
+
+            # Attach to attrs
+            attrs['found_item'] = found_item
+
+        # -------------------------
+        #   UPDATE (PUT/PATCH)
+        # -------------------------
+        # found_item_id is ignored by update
         return attrs
+
+    # -------------------------
+    #     CREATE
+    # -------------------------
 
     def create(self, validated_data):
         user = self.context['request'].user
+
         found_item = validated_data.pop('found_item')
         validated_data.pop('found_item_id', None)
 
@@ -456,6 +492,7 @@ class ClaimSerializer(serializers.ModelSerializer):
             **validated_data
         )
 
+        # Auto-create notification
         Notification.objects.create(
             user=found_item.user,
             notification_type='claim_update',
@@ -466,6 +503,17 @@ class ClaimSerializer(serializers.ModelSerializer):
         )
 
         return claim
+
+    # -------------------------
+    #     UPDATE
+    # -------------------------
+
+    def update(self, instance, validated_data):
+        # Never allow item to change later
+        validated_data.pop('found_item_id', None)
+        validated_data.pop('found_item', None)
+
+        return super().update(instance, validated_data)
 ###################################################################################################################################################################################################
 class MessageSerializer(serializers.ModelSerializer):
     sender_info = serializers.SerializerMethodField()
@@ -579,4 +627,5 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     claimed_items = serializers.IntegerField()
 
     user_registrations_today = serializers.IntegerField()
+
 
