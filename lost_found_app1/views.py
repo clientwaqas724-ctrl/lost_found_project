@@ -45,6 +45,7 @@ from .models import (
 from .serializers import *
 from rest_framework.views import APIView
 import os
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 ###################################################################################################################################################################################################
 ###################################################################################################################################################################################################
 def home(request):
@@ -376,12 +377,16 @@ class MyItemsView(APIView):
         return Response(serializer.data)
 ################################################################################################################################################################
 class ClaimViewSet(viewsets.ModelViewSet):
+    queryset = Claim.objects.all()
     serializer_class = ClaimSerializer
     permission_classes = [IsAuthenticated]
 
+    # FIX: Allow both JSON + multipart/form-data (for file uploads)
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
     def get_queryset(self):
         user = self.request.user
-        if user.user_type == 'admin':
+        if getattr(user, 'user_type', None) == 'admin':
             return Claim.objects.all()
         return Claim.objects.filter(user=user)
 
@@ -907,3 +912,4 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
