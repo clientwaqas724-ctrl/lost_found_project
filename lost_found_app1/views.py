@@ -46,6 +46,7 @@ from .serializers import *
 from rest_framework.views import APIView
 import os
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from .category_detector import auto_categorize_item
 ###################################################################################################################################################################################################
 ###################################################################################################################################################################################################
 def home(request):
@@ -912,4 +913,5 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
