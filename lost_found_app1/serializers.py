@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 import os
 import uuid
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+
 ###################################################################################################################################################################################################
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(
@@ -96,6 +97,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
         user.save()
         return user
+
 ###################################################################################################################################################################################################
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)
@@ -165,6 +167,7 @@ class LoginSerializer(serializers.Serializer):
             'tokens': tokens,
             'redirect_url': redirect_url
         }
+
 ###################################################################################################################################################################################################
 class UserProfileSerializer(serializers.ModelSerializer):
     profile_image_url = serializers.SerializerMethodField()
@@ -204,6 +207,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
         
         instance.save()
         return instance
+
 ###################################################################################################################################################################################################
 class UpdatePasswordSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)
@@ -236,6 +240,7 @@ class UpdatePasswordSerializer(serializers.Serializer):
         user.set_password(self.validated_data['new_password'])
         user.save()
         return user
+
 ###################################################################################################################################################################################################
 class ForgotPasswordSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)
@@ -263,6 +268,7 @@ class ForgotPasswordSerializer(serializers.Serializer):
         user.set_password(self.validated_data['new_password'])
         user.save()
         return user
+
 ###################################################################################################################################################################################################
 class UserListSerializer(serializers.ModelSerializer):
     class Meta:
@@ -273,12 +279,14 @@ class UserListSerializer(serializers.ModelSerializer):
             'profile_image', 'date_joined', 'is_active'
         )
         read_only_fields = fields
+
 ###################################################################################################################################################################################################
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = Category
         fields = ['id', 'name', 'description', 'created_at']
         read_only_fields = ['id', 'created_at']
+
 ###################################################################################################################################################################################################
 class FlexibleCategoryField(serializers.PrimaryKeyRelatedField):
     def to_internal_value(self, data):
@@ -296,6 +304,7 @@ class FlexibleCategoryField(serializers.PrimaryKeyRelatedField):
                 raise serializers.ValidationError(f"Category with name '{data}' does not exist.")
         else:
             raise serializers.ValidationError("Invalid category format. Must be ID or name.")
+
 ###################################################################################################################################################################################################
 class LostItemSerializer(serializers.ModelSerializer):
     user = serializers.CharField(source='user.get_full_name', read_only=True)
@@ -326,9 +335,13 @@ class LostItemSerializer(serializers.ModelSerializer):
 
     def get_image_url(self, obj):
         request = self.context.get('request')
-        if obj.item_image:
+        if obj.item_image and request:
             return request.build_absolute_uri(obj.item_image.url)
+        elif obj.item_image:
+            # Fallback without request context
+            return obj.item_image.url
         return None
+
 ###################################################################################################################################################################################################
 class FoundItemSerializer(serializers.ModelSerializer):
     user = serializers.CharField(source='user.get_full_name', read_only=True)
@@ -359,9 +372,13 @@ class FoundItemSerializer(serializers.ModelSerializer):
 
     def get_image_url(self, obj):
         request = self.context.get('request')
-        if obj.item_image:
+        if obj.item_image and request:
             return request.build_absolute_uri(obj.item_image.url)
+        elif obj.item_image:
+            # Fallback without request context
+            return obj.item_image.url
         return None
+
 ###################################################################################################################################################################################################
 class UserItemsSerializer(serializers.Serializer):
     lost_items = serializers.SerializerMethodField()
@@ -369,11 +386,14 @@ class UserItemsSerializer(serializers.Serializer):
 
     def get_lost_items(self, obj):
         lost_items = LostItem.objects.filter(user=obj)
-        return LostItemSerializer(lost_items, many=True).data
+        # Pass the context from parent serializer to child serializer
+        return LostItemSerializer(lost_items, many=True, context=self.context).data
 
     def get_found_items(self, obj):
         found_items = FoundItem.objects.filter(user=obj)
-        return FoundItemSerializer(found_items, many=True).data
+        # Pass the context from parent serializer to child serializer
+        return FoundItemSerializer(found_items, many=True, context=self.context).data
+
 ###################################################################################################################################################################################################
 class ClaimSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
@@ -515,6 +535,7 @@ class ClaimSerializer(serializers.ModelSerializer):
         validated_data.pop('found_item', None)
 
         return super().update(instance, validated_data)
+
 ###################################################################################################################################################################################################
 class MessageSerializer(serializers.ModelSerializer):
     sender_info = serializers.SerializerMethodField()
@@ -566,6 +587,7 @@ class MessageSerializer(serializers.ModelSerializer):
         )
         
         return message
+
 ###################################################################################################################################################################################################
 class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
@@ -575,6 +597,7 @@ class NotificationSerializer(serializers.ModelSerializer):
             'lost_item', 'found_item', 'claim', 'message_ref', 'is_read', 'created_at'
         ]
         read_only_fields = ['id', 'user', 'created_at']
+
 ################################################################################################################################################################
 class ImageSearchLogSerializer(serializers.ModelSerializer):
     class Meta:
@@ -584,6 +607,7 @@ class ImageSearchLogSerializer(serializers.ModelSerializer):
             'category_filters', 'results_count', 'search_duration', 'created_at'
         ]
         read_only_fields = ['id', 'user', 'created_at']
+
 ##############################################################################################################################################################
 class ManualImageSearchSerializer(serializers.Serializer):
     search_query = serializers.CharField(required=False, allow_blank=True)
@@ -611,6 +635,7 @@ class ManualImageSearchSerializer(serializers.Serializer):
             return None
 
         return value
+
 ##########################################################################################################################################################################
 class DashboardStatsSerializer(serializers.Serializer):
     total_lost_items = serializers.IntegerField()
@@ -620,14 +645,11 @@ class DashboardStatsSerializer(serializers.Serializer):
     approved_claims = serializers.IntegerField()
     total_users = serializers.IntegerField()
     recent_activities = serializers.ListField()
+
 ###################################################################################################################################################################################################
 class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     verified_lost_items = serializers.IntegerField()
     verified_found_items = serializers.IntegerField()
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
-
     user_registrations_today = serializers.IntegerField()
-
-
-
