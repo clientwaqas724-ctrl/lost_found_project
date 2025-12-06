@@ -5,7 +5,6 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.db.models import Q
 from django.shortcuts import render, get_object_or_404
 from django.contrib import messages
-from django.db.models import Count
 from rest_framework import status, viewsets, mixins
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -47,11 +46,13 @@ from rest_framework.views import APIView
 import os
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from .category_detector import auto_categorize_item
+
 ###################################################################################################################################################################################################
 ###################################################################################################################################################################################################
 def home(request):
     context = {}
     return render(request, 'home.html', context=context)
+
 ###################################################################################################################################################################################################
 ###################################################################################################################################################################################################
 class AuthViewSet(viewsets.GenericViewSet):
@@ -280,10 +281,10 @@ class LostItemViewSet(viewsets.ModelViewSet):
         page = self.paginate_queryset(queryset)
 
         if page is not None:
-            serializer = self.get_serializer(page, many=True)
+            serializer = self.get_serializer(page, many=True, context={'request': request})
             return self.get_paginated_response(serializer.data)
 
-        serializer = self.get_serializer(queryset, many=True)
+        serializer = self.get_serializer(queryset, many=True, context={'request': request})
         return Response(serializer.data)
 
     def perform_create(self, serializer):
@@ -308,7 +309,7 @@ class LostItemViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def my_lost_items(self, request):
         items = LostItem.objects.filter(user=request.user)
-        serializer = self.get_serializer(items, many=True)
+        serializer = self.get_serializer(items, many=True, context={'request': request})
         return Response(serializer.data)
 
     @action(detail=True, methods=['post'])
@@ -320,7 +321,7 @@ class LostItemViewSet(viewsets.ModelViewSet):
 
         item.status = 'found'
         item.save()
-        serializer = self.get_serializer(item)
+        serializer = self.get_serializer(item, context={'request': request})
         return Response(serializer.data)
 
 #########################################################################################################################################################################################
@@ -367,15 +368,20 @@ class FoundItemViewSet(viewsets.ModelViewSet):
         item.save()
         serializer = self.get_serializer(item, context={'request': request})
         return Response(serializer.data)
+
 ################################################################################################################################################################
 class MyItemsView(APIView):
     permission_classes = [IsAuthenticated]
+    
     def get(self, request):
         user = request.user
         if user.user_type != 'resident':
             return Response({"detail": "Access denied. Only residents can access this."}, status=403)
-        serializer = UserItemsSerializer(user)
+        
+        # Pass the request context to the serializer
+        serializer = UserItemsSerializer(user, context={'request': request})
         return Response(serializer.data)
+
 ################################################################################################################################################################
 class ClaimViewSet(viewsets.ModelViewSet):
     queryset = Claim.objects.all()
@@ -741,6 +747,7 @@ def detect_category_from_upload(request):
             'message': 'Category detection failed',
             'error': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 ################################################################################################################################################################
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -913,5 +920,3 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
-
-
