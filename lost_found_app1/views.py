@@ -383,13 +383,12 @@ class MyItemsView(APIView):
         return Response(serializer.data)
 
 ###########################################################################################################################################################################################
-# views.py - Updated version
 class ClaimViewSet(viewsets.ModelViewSet):
     queryset = Claim.objects.all()
     serializer_class = ClaimSerializer
     permission_classes = [IsAuthenticated]
 
-    # CHANGED: Use JSONParser first to handle Android's JSON requests properly
+    # Use JSONParser first to handle Android's JSON requests properly
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def get_queryset(self):
@@ -400,11 +399,13 @@ class ClaimViewSet(viewsets.ModelViewSet):
     
     def create(self, request, *args, **kwargs):
         """
-        Override create to handle both JSON and multipart/form-data requests
+        Override create to add debugging
         """
-        # Log the request content type for debugging
-        print(f"Request content type: {request.content_type}")
-        print(f"Request data: {request.data}")
+        # Log the request for debugging
+        print(f"DEBUG - Request method: {request.method}")
+        print(f"DEBUG - Content type: {request.content_type}")
+        print(f"DEBUG - Raw data: {request.data}")
+        print(f"DEBUG - Headers: {dict(request.headers)}")
         
         return super().create(request, *args, **kwargs)
 #################################################################################################################################################################################################
@@ -930,6 +931,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
