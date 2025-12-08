@@ -201,6 +201,7 @@ class FoundItem(models.Model):
     def get_material_tags_list(self):
         return [tag.strip() for tag in self.material_tags.split(',') if tag.strip()]
 ####################################################################################################################################################################################################
+# models.py
 class Claim(models.Model):
     STATUS_CHOICES = (
         ('pending', 'Pending Review'),
@@ -213,14 +214,15 @@ class Claim(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='claims')
     found_item = models.ForeignKey(FoundItem, on_delete=models.CASCADE, related_name='claims')
     
-    claim_description = models.TextField()
-    proof_of_ownership = models.TextField(blank=True)
+    # Make these fields optional (blank=True, null=False)
+    claim_description = models.TextField(blank=True, default="")
+    proof_of_ownership = models.TextField(blank=True, default="")
     
-    # Make sure it's optional for both null and blank
-    supporting_images = models.TextField(blank=True, null=True, default=None)
+    # Store multiple image URLs as JSON array
+    supporting_images = models.JSONField(default=list, blank=True, null=True)
     
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
-    admin_notes = models.TextField(blank=True)
+    admin_notes = models.TextField(blank=True, default="")
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -294,6 +296,7 @@ class ImageSearchLog(models.Model):
     def __str__(self):
 
         return f"Image Search - {self.search_type} - {self.created_at.strftime('%Y-%m-%d %H:%M')}"
+
 
 
 
