@@ -201,7 +201,6 @@ class FoundItem(models.Model):
     def get_material_tags_list(self):
         return [tag.strip() for tag in self.material_tags.split(',') if tag.strip()]
 ####################################################################################################################################################################################################
-# models.py - Make supporting_images optional
 class Claim(models.Model):
     STATUS_CHOICES = (
         ('pending', 'Pending Review'),
@@ -295,5 +294,6 @@ class ImageSearchLog(models.Model):
     def __str__(self):
 
         return f"Image Search - {self.search_type} - {self.created_at.strftime('%Y-%m-%d %H:%M')}"
+
 
 
