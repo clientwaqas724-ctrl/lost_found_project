@@ -383,19 +383,30 @@ class MyItemsView(APIView):
         return Response(serializer.data)
 
 ###########################################################################################################################################################################################
+# views.py - Updated version
 class ClaimViewSet(viewsets.ModelViewSet):
     queryset = Claim.objects.all()
     serializer_class = ClaimSerializer
     permission_classes = [IsAuthenticated]
 
-    # FIX: accept JSON + multipart + form data
-    parser_classes = [MultiPartParser, FormParser, JSONParser]
+    # CHANGED: Use JSONParser first to handle Android's JSON requests properly
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def get_queryset(self):
         user = self.request.user
         if getattr(user, 'user_type', None) == 'admin':
             return Claim.objects.all()
         return Claim.objects.filter(user=user)
+    
+    def create(self, request, *args, **kwargs):
+        """
+        Override create to handle both JSON and multipart/form-data requests
+        """
+        # Log the request content type for debugging
+        print(f"Request content type: {request.content_type}")
+        print(f"Request data: {request.data}")
+        
+        return super().create(request, *args, **kwargs)
 #################################################################################################################################################################################################
 class MessageViewSet(viewsets.ModelViewSet):
     serializer_class = MessageSerializer
@@ -919,6 +930,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
