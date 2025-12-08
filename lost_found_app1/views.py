@@ -387,34 +387,22 @@ class ClaimViewSet(viewsets.ModelViewSet):
     queryset = Claim.objects.all()
     serializer_class = ClaimSerializer
     permission_classes = [IsAuthenticated]
-    
-    # Accept JSON, form data, and multipart
+
     parser_classes = [JSONParser, MultiPartParser, FormParser]
-    
+
     def get_queryset(self):
         user = self.request.user
-        if getattr(user, 'user_type', None) == 'admin':
+        if getattr(user, "user_type", None) == "admin":
             return Claim.objects.all()
         return Claim.objects.filter(user=user)
-    
+
     def create(self, request, *args, **kwargs):
-        """
-        Handle claim creation with flexible input formats
-        """
-        # Check if data is in request.data (JSON) or request.POST (form)
-        data = request.data
-        
-        # If supportingImages comes as a file field in multipart, handle it
-        if 'supportingImages' in request.FILES:
-            # For now, just get the file URL if it's uploaded
-            # You might want to save the file and store its URL
-            pass
-        
+        data = request.data.copy()
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)
-        headers = self.get_success_headers(serializer.data)
-        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 #################################################################################################################################################################################################
 class MessageViewSet(viewsets.ModelViewSet):
     serializer_class = MessageSerializer
@@ -938,6 +926,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
