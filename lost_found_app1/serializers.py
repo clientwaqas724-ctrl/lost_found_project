@@ -400,11 +400,9 @@ class ClaimSerializer(serializers.ModelSerializer):
 
     # Backward compatibility
     user_email = serializers.SerializerMethodField()
+    userEmail = serializers.SerializerMethodField()  # Android camelCase
 
-    # Android camelCase compatibility
-    userEmail = serializers.SerializerMethodField()
-
-    # Only required during create, NOT during update
+    # Required only during create
     found_item_id = serializers.UUIDField(write_only=True, required=False)
 
     found_item_title = serializers.CharField(source='found_item.title', read_only=True)
@@ -426,9 +424,9 @@ class ClaimSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at', 'resolved_at'
         ]
 
-    # -------------------------
-    #     HELPER FIELDS
-    # -------------------------
+    # --------------------------------------------
+    # HELPER FIELDS
+    # --------------------------------------------
 
     def get_user_email(self, obj):
         return obj.user.email if obj.user and obj.user.email else ""
@@ -447,28 +445,34 @@ class ClaimSerializer(serializers.ModelSerializer):
             return obj.found_item.item_image.url
         return None
 
-    # -------------------------
-    #     VALIDATION
-    # -------------------------
-
+    # --------------------------------------------
+    # VALIDATION
+    # --------------------------------------------
     def validate(self, attrs):
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             raise serializers.ValidationError("Authentication required.")
 
+        # FIX → Avoid "submitted data was not a file" error
+        proof = attrs.get("proof_of_ownership", None)
+        if proof is not None and not hasattr(proof, "read"):
+            raise serializers.ValidationError({
+                "proof_of_ownership": "Invalid file. Must be uploaded using multipart/form-data."
+            })
+
         is_create = self.instance is None
         found_item_id = attrs.get('found_item_id')
 
-        # -------------------------
-        #   CREATE CLAIM ONLY
-        # -------------------------
+        # ----------------------------------------------------
+        # CREATE (POST)
+        # ----------------------------------------------------
         if is_create:
             if not found_item_id:
                 raise serializers.ValidationError({
                     "found_item_id": "This field is required."
                 })
 
-            # Check if found item exists
+            # Found item validation
             try:
                 found_item = FoundItem.objects.get(id=found_item_id)
             except FoundItem.DoesNotExist:
@@ -476,7 +480,7 @@ class ClaimSerializer(serializers.ModelSerializer):
                     "found_item_id": "Found item does not exist."
                 })
 
-            # Cannot claim your own item
+            # Prevent claiming your own item
             if found_item.user == request.user:
                 raise serializers.ValidationError({
                     "detail": "You cannot claim your own found item."
@@ -488,19 +492,14 @@ class ClaimSerializer(serializers.ModelSerializer):
                     "detail": "You have already submitted a claim for this item."
                 })
 
-            # Attach to attrs
             attrs['found_item'] = found_item
 
-        # -------------------------
-        #   UPDATE (PUT/PATCH)
-        # -------------------------
-        # found_item_id is ignored by update
+        # UPDATE: ignore found_item_id
         return attrs
 
-    # -------------------------
-    #     CREATE
-    # -------------------------
-
+    # --------------------------------------------
+    # CREATE
+    # --------------------------------------------
     def create(self, validated_data):
         user = self.context['request'].user
 
@@ -525,17 +524,13 @@ class ClaimSerializer(serializers.ModelSerializer):
 
         return claim
 
-    # -------------------------
-    #     UPDATE
-    # -------------------------
-
+    # --------------------------------------------
+    # UPDATE
+    # --------------------------------------------
     def update(self, instance, validated_data):
-        # Never allow item to change later
         validated_data.pop('found_item_id', None)
         validated_data.pop('found_item', None)
-
         return super().update(instance, validated_data)
-
 ###################################################################################################################################################################################################
 class MessageSerializer(serializers.ModelSerializer):
     sender_info = serializers.SerializerMethodField()
@@ -653,3 +648,4 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
