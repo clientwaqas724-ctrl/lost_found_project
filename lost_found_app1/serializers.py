@@ -398,11 +398,9 @@ class UserItemsSerializer(serializers.Serializer):
 class ClaimSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
 
-    # Backward compatibility
     user_email = serializers.SerializerMethodField()
     userEmail = serializers.SerializerMethodField()
 
-    # Android input field names
     foundItem = serializers.CharField(required=False, allow_blank=True)
     foundItemId = serializers.CharField(required=False, allow_blank=True)
 
@@ -434,7 +432,6 @@ class ClaimSerializer(serializers.ModelSerializer):
         write_only=True
     )
 
-    # Read-only output fields
     found_item_title = serializers.CharField(source='found_item.title', read_only=True)
     found_item_image = serializers.SerializerMethodField()
 
@@ -447,27 +444,20 @@ class ClaimSerializer(serializers.ModelSerializer):
         model = Claim
         fields = [
             'id', 'user', 'user_email', 'userEmail',
-
-            # Android compatible fields
             'foundItem', 'foundItemId',
             'claimDescription', 'claim_description',
             'proofOfOwnership', 'proof_of_ownership',
             'supportingImages', 'supporting_images',
             'status', 'adminNotes', 'admin_notes',
-
             'found_item_title', 'found_item_image',
             'created_at', 'updated_at', 'resolved_at'
         ]
-
         read_only_fields = [
             'id', 'user', 'user_email', 'userEmail',
             'found_item_title', 'found_item_image',
             'supporting_images', 'created_at', 'updated_at'
         ]
 
-    # --------------------------------------------
-    # CUSTOM HELPERS
-    # --------------------------------------------
     def get_user_email(self, obj):
         return obj.user.email if obj.user else ""
 
@@ -477,59 +467,67 @@ class ClaimSerializer(serializers.ModelSerializer):
     def get_found_item_image(self, obj):
         if obj.found_item and obj.found_item.item_image:
             request = self.context.get('request')
-            return request.build_absolute_uri(obj.found_item.item_image.url)
+            if request:
+                return request.build_absolute_uri(obj.found_item.item_image.url)
+            return obj.found_item.item_image.url
         return None
 
-    # --------------------------------------------
-    # VALIDATION (VERY FLEXIBLE - NOTHING REQUIRED)
-    # --------------------------------------------
     def validate(self, attrs):
         request = self.context.get('request')
 
-        # Accept both foundItem / foundItemId
+        # Get found_item if provided
         found_id = attrs.pop('foundItem', None) or attrs.pop('foundItemId', None)
-
         if found_id:
             try:
-                attrs['found_item'] = FoundItem.objects.get(id=found_id)
+                found_item = FoundItem.objects.get(id=found_id)
+                attrs['found_item'] = found_item
             except FoundItem.DoesNotExist:
-                pass  # Make it optional
+                attrs['found_item'] = None
 
         # Handle supportingImages
         imgs = attrs.pop('supportingImages', None)
         if imgs:
-            attrs['supporting_images'] = [i.strip() for i in imgs.split(',') if i.strip()]
+            if isinstance(imgs, str):
+                attrs['supporting_images'] = [i.strip() for i in imgs.split(',') if i.strip()]
+            elif isinstance(imgs, list):
+                attrs['supporting_images'] = imgs
+            else:
+                attrs['supporting_images'] = []
+        else:
+            attrs['supporting_images'] = []
 
         return attrs
 
-    # --------------------------------------------
-    # CREATE
-    # --------------------------------------------
     def create(self, validated_data):
         user = self.context['request'].user
-        claim = Claim.objects.create(user=user, **validated_data)
+        found_item = validated_data.get('found_item', None)
+        supporting_images = validated_data.pop('supporting_images', [])
 
-        # Optional: send notification to found_item owner
-        if claim.found_item:
-            Notification.objects.create(
-                user=claim.found_item.user,
-                notification_type='claim_update',
-                title='New Claim Received',
-                message=f"{user.username} submitted a claim.",
-                found_item=claim.found_item,
-                claim=claim
-            )
+        claim = Claim.objects.create(
+            user=user,
+            supporting_images=supporting_images,
+            **validated_data
+        )
+
+        # Send notification ONLY if found_item exists
+        if found_item:
+            try:
+                Notification.objects.create(
+                    user=found_item.user,
+                    notification_type='claim_update',
+                    title='New Claim Received',
+                    message=f"{user.username} submitted a claim.",
+                    found_item=found_item,
+                    claim=claim
+                )
+            except Exception:
+                pass  # Do not crash
+
         return claim
 
-    # --------------------------------------------
-    # UPDATE
-    # --------------------------------------------
     def update(self, instance, validated_data):
-
-        # Update supporting_images if provided
-        if "supporting_images" in validated_data:
-            instance.supporting_images = validated_data["supporting_images"]
-
+        if 'supporting_images' in validated_data:
+            instance.supporting_images = validated_data.pop('supporting_images')
         return super().update(instance, validated_data)
 ###################################################################################################################################################################################################
 class MessageSerializer(serializers.ModelSerializer):
@@ -648,6 +646,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
