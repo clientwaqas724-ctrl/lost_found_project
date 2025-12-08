@@ -398,11 +398,11 @@ class UserItemsSerializer(serializers.Serializer):
 class ClaimSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
 
-    # Backward compatibility
+    # backward compatibility
     user_email = serializers.SerializerMethodField()
     userEmail = serializers.SerializerMethodField()
 
-    # Required only during create
+    # used ONLY during create
     found_item_id = serializers.UUIDField(write_only=True, required=False)
 
     found_item_title = serializers.CharField(source='found_item.title', read_only=True)
@@ -414,7 +414,8 @@ class ClaimSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'user', 'user_email', 'userEmail', 'found_item', 'found_item_id',
             'found_item_title', 'found_item_image', 'claim_description',
-            'proof_of_ownership', 'supporting_images', 'status', 'admin_notes',
+            'proof_of_ownership', 'supporting_images',
+            'status', 'admin_notes',
             'created_at', 'updated_at', 'resolved_at'
         ]
 
@@ -425,7 +426,7 @@ class ClaimSerializer(serializers.ModelSerializer):
         ]
 
     # -------------------------------------------------------------
-    # HELPER FIELDS
+    # HELPERS
     # -------------------------------------------------------------
     def get_user_email(self, obj):
         return obj.user.email if obj.user and obj.user.email else ""
@@ -445,65 +446,62 @@ class ClaimSerializer(serializers.ModelSerializer):
         return None
 
     # -------------------------------------------------------------
-    # FIX: SAFE FILE VALIDATION (NO MORE “NOT A FILE” ERRORS)
+    # NORMALIZE FILE FIELD (THE MAIN FIX)
     # -------------------------------------------------------------
-    def _normalize_file_field(self, value):
-        """Convert invalid file values to None (fixes JSON + Android empty string issue)."""
-        if value in ["", None, [], {}, 0]:
+    def _normalize_image(self, value):
+        """
+        Prevents: 'The submitted data was not a file'
+        Accepts: file, null, empty string
+        Rejects anything else
+        """
+        # Allow empty values (common in Android/JSON)
+        if value in ["", None, {}, [], 0]:
             return None
 
-        # If it's already a file → OK
+        # If actual file → OK
         if hasattr(value, "read"):
             return value
 
-        # Anything else → invalid for file field
-        raise serializers.ValidationError("Invalid file format. Must upload using multipart/form-data.")
+        # If raw string text sent → treat as invalid (must be multipart)
+        raise serializers.ValidationError(
+            "Invalid file. Upload image using multipart/form-data."
+        )
 
     # -------------------------------------------------------------
     # VALIDATION
     # -------------------------------------------------------------
     def validate(self, attrs):
         request = self.context.get('request')
+
         if not request or not request.user.is_authenticated:
             raise serializers.ValidationError("Authentication required.")
 
-        # Normalize file fields
-        if "proof_of_ownership" in attrs:
-            attrs["proof_of_ownership"] = self._normalize_file_field(attrs.get("proof_of_ownership"))
-
+        # Prevent crash from invalid file formats
         if "supporting_images" in attrs:
-            attrs["supporting_images"] = self._normalize_file_field(attrs.get("supporting_images"))
+            attrs["supporting_images"] = self._normalize_image(attrs["supporting_images"])
+
+        # proof_of_ownership is TEXT (string) → DO NOT VALIDATE AS FILE
+        # So we DO NOT normalize proof_of_ownership anymore.
 
         is_create = self.instance is None
         found_item_id = attrs.get('found_item_id')
 
-        # ---------------------------
-        # CREATE
-        # ---------------------------
+        # CREATE ONLY
         if is_create:
+
             if not found_item_id:
-                raise serializers.ValidationError({
-                    "found_item_id": "This field is required."
-                })
+                raise serializers.ValidationError({"found_item_id": "This field is required."})
 
             try:
                 found_item = FoundItem.objects.get(id=found_item_id)
             except FoundItem.DoesNotExist:
-                raise serializers.ValidationError({
-                    "found_item_id": "Found item does not exist."
-                })
+                raise serializers.ValidationError({"found_item_id": "Found item does not exist."})
 
-            # user cannot claim their own item
             if found_item.user == request.user:
-                raise serializers.ValidationError({
-                    "detail": "You cannot claim your own found item."
-                })
+                raise serializers.ValidationError({"detail": "You cannot claim your own found item."})
 
-            # prevent duplicate claim
             if Claim.objects.filter(user=request.user, found_item=found_item).exists():
-                raise serializers.ValidationError({
-                    "detail": "You have already submitted a claim for this item."
-                })
+                raise serializers.ValidationError({"detail": "You already submitted a claim for this item."})
 
             attrs['found_item'] = found_item
 
@@ -524,12 +522,11 @@ class ClaimSerializer(serializers.ModelSerializer):
             **validated_data
         )
 
-        # notification
         Notification.objects.create(
             user=found_item.user,
             notification_type='claim_update',
             title='New Claim Received',
-            message=f'{user.username} has submitted a claim for your found item "{found_item.title}".',
+            message=f'{user.username} submitted a claim for your item "{found_item.title}".',
             found_item=found_item,
             claim=claim
         )
@@ -660,5 +657,6 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
