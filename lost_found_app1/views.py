@@ -382,7 +382,7 @@ class MyItemsView(APIView):
         serializer = UserItemsSerializer(user, context={'request': request})
         return Response(serializer.data)
 
-################################################################################################################################################################
+###########################################################################################################################################################################################
 class ClaimViewSet(viewsets.ModelViewSet):
     queryset = Claim.objects.all()
     serializer_class = ClaimSerializer
@@ -396,7 +396,7 @@ class ClaimViewSet(viewsets.ModelViewSet):
         if getattr(user, 'user_type', None) == 'admin':
             return Claim.objects.all()
         return Claim.objects.filter(user=user)
-################################################################################################################################################################
+#################################################################################################################################################################################################
 class MessageViewSet(viewsets.ModelViewSet):
     serializer_class = MessageSerializer
     permission_classes = [IsAuthenticated]
@@ -919,5 +919,6 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
