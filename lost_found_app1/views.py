@@ -387,10 +387,10 @@ class ClaimViewSet(viewsets.ModelViewSet):
     queryset = Claim.objects.all()
     serializer_class = ClaimSerializer
     permission_classes = [IsAuthenticated]
-
-    # Use JSONParser first to handle Android's JSON requests properly
+    
+    # Accept JSON, form data, and multipart
     parser_classes = [JSONParser, MultiPartParser, FormParser]
-
+    
     def get_queryset(self):
         user = self.request.user
         if getattr(user, 'user_type', None) == 'admin':
@@ -399,15 +399,22 @@ class ClaimViewSet(viewsets.ModelViewSet):
     
     def create(self, request, *args, **kwargs):
         """
-        Override create to add debugging
+        Handle claim creation with flexible input formats
         """
-        # Log the request for debugging
-        print(f"DEBUG - Request method: {request.method}")
-        print(f"DEBUG - Content type: {request.content_type}")
-        print(f"DEBUG - Raw data: {request.data}")
-        print(f"DEBUG - Headers: {dict(request.headers)}")
+        # Check if data is in request.data (JSON) or request.POST (form)
+        data = request.data
         
-        return super().create(request, *args, **kwargs)
+        # If supportingImages comes as a file field in multipart, handle it
+        if 'supportingImages' in request.FILES:
+            # For now, just get the file URL if it's uploaded
+            # You might want to save the file and store its URL
+            pass
+        
+        serializer = self.get_serializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 #################################################################################################################################################################################################
 class MessageViewSet(viewsets.ModelViewSet):
     serializer_class = MessageSerializer
@@ -931,6 +938,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
