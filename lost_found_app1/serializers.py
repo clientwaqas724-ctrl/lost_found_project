@@ -395,7 +395,6 @@ class UserItemsSerializer(serializers.Serializer):
         return FoundItemSerializer(found_items, many=True, context=self.context).data
 
 ###################################################################################################################################################################################################
-# serializers.py - Updated version
 class ClaimSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
 
@@ -403,8 +402,9 @@ class ClaimSerializer(serializers.ModelSerializer):
     user_email = serializers.SerializerMethodField()
     userEmail = serializers.SerializerMethodField()
 
-    # Required only during create
+    # Accept both snake_case and camelCase for write operations
     found_item_id = serializers.UUIDField(write_only=True, required=False)
+    foundItem = serializers.UUIDField(write_only=True, required=False, source='found_item_id')
 
     found_item_title = serializers.CharField(source='found_item.title', read_only=True)
     found_item_image = serializers.SerializerMethodField()
@@ -413,7 +413,7 @@ class ClaimSerializer(serializers.ModelSerializer):
     class Meta:
         model = Claim
         fields = [
-            'id', 'user', 'user_email', 'userEmail', 'found_item', 'found_item_id',
+            'id', 'user', 'user_email', 'userEmail', 'found_item', 'found_item_id', 'foundItem',
             'found_item_title', 'found_item_image', 'claim_description',
             'proof_of_ownership', 'supporting_images', 'status', 'admin_notes',
             'created_at', 'updated_at', 'resolved_at'
@@ -446,19 +446,34 @@ class ClaimSerializer(serializers.ModelSerializer):
         return None
 
     # -------------------------------------------------------------
-    # VALIDATION - UPDATED for supporting_images as TextField
+    # VALIDATION - Handle both camelCase and snake_case
     # -------------------------------------------------------------
     def validate(self, attrs):
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             raise serializers.ValidationError("Authentication required.")
 
+        # Handle camelCase to snake_case conversion for all fields
+        # Map camelCase field names to their snake_case equivalents
+        field_mappings = {
+            'claimDescription': 'claim_description',
+            'proofOfOwnership': 'proof_of_ownership',
+            'supportingImages': 'supporting_images',
+            'adminNotes': 'admin_notes',
+            'foundItem': 'found_item_id',
+        }
+
+        # Copy and convert camelCase fields to snake_case
+        for camel_field, snake_field in field_mappings.items():
+            if camel_field in attrs:
+                attrs[snake_field] = attrs.pop(camel_field)
+
         # Handle empty/null supporting_images
         if 'supporting_images' in attrs:
             if attrs['supporting_images'] in ["", None]:
                 attrs['supporting_images'] = None
             elif isinstance(attrs['supporting_images'], str):
-                # Clean the string - remove any leading/trailing commas/whitespace
+                # Clean the string
                 attrs['supporting_images'] = attrs['supporting_images'].strip()
                 if attrs['supporting_images'] == "":
                     attrs['supporting_images'] = None
@@ -506,6 +521,7 @@ class ClaimSerializer(serializers.ModelSerializer):
 
         found_item = validated_data.pop('found_item')
         validated_data.pop('found_item_id', None)
+        validated_data.pop('foundItem', None)  # Remove camelCase version if present
 
         claim = Claim.objects.create(
             user=user,
@@ -530,6 +546,7 @@ class ClaimSerializer(serializers.ModelSerializer):
     # -------------------------------------------------------------
     def update(self, instance, validated_data):
         validated_data.pop('found_item_id', None)
+        validated_data.pop('foundItem', None)  # Remove camelCase version
         validated_data.pop('found_item', None)
         return super().update(instance, validated_data)
 ###################################################################################################################################################################################################
@@ -649,6 +666,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
