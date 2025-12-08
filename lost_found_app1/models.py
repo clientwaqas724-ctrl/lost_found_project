@@ -201,7 +201,7 @@ class FoundItem(models.Model):
     def get_material_tags_list(self):
         return [tag.strip() for tag in self.material_tags.split(',') if tag.strip()]
 ####################################################################################################################################################################################################
-# models.py - Update the supporting_images field
+# models.py - Make supporting_images optional
 class Claim(models.Model):
     STATUS_CHOICES = (
         ('pending', 'Pending Review'),
@@ -217,8 +217,8 @@ class Claim(models.Model):
     claim_description = models.TextField()
     proof_of_ownership = models.TextField(blank=True)
     
-    # CHANGED: Changed from ImageField to TextField to store image URLs/URIs
-    supporting_images = models.TextField(blank=True, null=True)
+    # Make sure it's optional for both null and blank
+    supporting_images = models.TextField(blank=True, null=True, default=None)
     
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     admin_notes = models.TextField(blank=True)
@@ -295,4 +295,5 @@ class ImageSearchLog(models.Model):
     def __str__(self):
 
         return f"Image Search - {self.search_type} - {self.created_at.strftime('%Y-%m-%d %H:%M')}"
+
 
