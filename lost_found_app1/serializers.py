@@ -395,55 +395,88 @@ class UserItemsSerializer(serializers.Serializer):
         return FoundItemSerializer(found_items, many=True, context=self.context).data
 
 ###################################################################################################################################################################################################
+# serializers.py
 class ClaimSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
-
+    
     # Backward compatibility
     user_email = serializers.SerializerMethodField()
     userEmail = serializers.SerializerMethodField()
-
-    # Accept camelCase fields from Android (now all NOT required)
-    foundItem = serializers.UUIDField(write_only=True, required=False, source='found_item_id')
-    claimDescription = serializers.CharField(write_only=True, required=False, source='claim_description')
-    proofOfOwnership = serializers.CharField(write_only=True, required=False, source='proof_of_ownership')
-    supportingImages = serializers.CharField(write_only=True, required=False, allow_null=True, source='supporting_images')
-    adminNotes = serializers.CharField(write_only=True, required=False, allow_null=True, source='admin_notes')
-
-    # Read-only fields
+    
+    # Accept field names EXACTLY as sent by Android
+    foundItem = serializers.UUIDField(write_only=True, required=False)
+    found_item_id = serializers.UUIDField(write_only=True, required=False)
+    
+    claimDescription = serializers.CharField(
+        source='claim_description', 
+        required=False, 
+        allow_blank=True,
+        default=""
+    )
+    
+    proofOfOwnership = serializers.CharField(
+        source='proof_of_ownership', 
+        required=False, 
+        allow_blank=True,
+        default=""
+    )
+    
+    supportingImages = serializers.CharField(
+        required=False, 
+        allow_blank=True,
+        write_only=True
+    )
+    
+    adminNotes = serializers.CharField(
+        source='admin_notes', 
+        required=False, 
+        allow_blank=True,
+        default="",
+        write_only=True
+    )
+    
+    # Read-only fields for response
     found_item_title = serializers.CharField(source='found_item.title', read_only=True)
     found_item_image = serializers.SerializerMethodField()
     found_item = serializers.SerializerMethodField(read_only=True)
-
+    
+    # Return supporting_images as array
+    supporting_images = serializers.ListField(
+        child=serializers.CharField(),
+        read_only=True
+    )
+    
     class Meta:
         model = Claim
         fields = [
-            'id', 'user', 'user_email', 'userEmail',
-            # Write-only fields (all optional now)
-            'foundItem', 'claimDescription', 'proofOfOwnership',
-            'supportingImages', 'adminNotes',
-            # Read-only fields
-            'found_item', 'found_item_title', 'found_item_image',
-            'status', 'created_at', 'updated_at', 'resolved_at'
+            'id', 'user', 'user_email', 'userEmail', 
+            'foundItem', 'found_item_id', 'found_item', 'found_item_title', 'found_item_image',
+            'claimDescription', 'claim_description',
+            'proofOfOwnership', 'proof_of_ownership',
+            'supportingImages', 'supporting_images',
+            'status', 'adminNotes', 'admin_notes',
+            'created_at', 'updated_at', 'resolved_at'
         ]
-
+        
         read_only_fields = [
             'id', 'user', 'user_email', 'userEmail', 'found_item',
             'found_item_title', 'found_item_image', 'status',
-            'created_at', 'updated_at', 'resolved_at'
+            'supporting_images', 'claim_description', 'proof_of_ownership',
+            'admin_notes', 'created_at', 'updated_at', 'resolved_at'
         ]
-
+    
     # -------------------------------------------------------------
     # HELPER FIELDS
     # -------------------------------------------------------------
     def get_user_email(self, obj):
         return obj.user.email if obj.user and obj.user.email else ""
-
+    
     def get_userEmail(self, obj):
         return self.get_user_email(obj)
-
+    
     def get_found_item(self, obj):
         return str(obj.found_item.id) if obj.found_item else ""
-
+    
     def get_found_item_image(self, obj):
         request = self.context.get('request')
         if obj.found_item and obj.found_item.item_image:
@@ -451,7 +484,7 @@ class ClaimSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(obj.found_item.item_image.url)
             return obj.found_item.item_image.url
         return None
-
+    
     # -------------------------------------------------------------
     # VALIDATION
     # -------------------------------------------------------------
@@ -459,51 +492,82 @@ class ClaimSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             raise serializers.ValidationError("Authentication required.")
-
+        
         is_create = self.instance is None
-        found_item_id = attrs.get('found_item_id')
-
-        # Only check on CREATE
+        
+        # Get found_item_id from either 'foundItem' or 'found_item_id'
+        found_item_id = attrs.get('foundItem') or attrs.get('found_item_id')
+        
+        # ---------------------------
+        # CREATE VALIDATION
+        # ---------------------------
         if is_create:
             if not found_item_id:
                 raise serializers.ValidationError({
-                    "foundItem": "This field is required when creating a claim."
+                    "foundItem": "This field is required."
                 })
-
+            
             try:
                 found_item = FoundItem.objects.get(id=found_item_id)
             except FoundItem.DoesNotExist:
                 raise serializers.ValidationError({
-                    "foundItem": f"Found item with ID {found_item_id} does not exist."
+                    "foundItem": "Found item does not exist."
                 })
-
+            
+            # User cannot claim their own item
             if found_item.user == request.user:
                 raise serializers.ValidationError({
                     "detail": "You cannot claim your own found item."
                 })
-
+            
+            # Prevent duplicate claim
             if Claim.objects.filter(user=request.user, found_item=found_item).exists():
                 raise serializers.ValidationError({
                     "detail": "You have already submitted a claim for this item."
                 })
-
+            
             attrs['found_item'] = found_item
-
+        
+        # Remove the foundItem/found_item_id fields as we don't need them in validated_data
+        attrs.pop('foundItem', None)
+        attrs.pop('found_item_id', None)
+        
+        # Handle supportingImages - convert comma-separated string to list
+        supporting_images = attrs.pop('supportingImages', None)
+        if supporting_images is not None:
+            if isinstance(supporting_images, str) and supporting_images.strip():
+                # Split by comma and filter out empty strings
+                image_list = [img.strip() for img in supporting_images.split(',') if img.strip()]
+                attrs['supporting_images'] = image_list
+            elif isinstance(supporting_images, list):
+                attrs['supporting_images'] = supporting_images
+            else:
+                attrs['supporting_images'] = []
+        
         return attrs
-
+    
     # -------------------------------------------------------------
     # CREATE
     # -------------------------------------------------------------
     def create(self, validated_data):
         user = self.context['request'].user
-        found_item = validated_data.pop('found_item')
-
+        found_item = validated_data.pop('found_item', None)
+        
+        if not found_item:
+            raise serializers.ValidationError("Found item is required.")
+        
+        # Extract supporting_images if present
+        supporting_images = validated_data.pop('supporting_images', [])
+        
+        # Create the claim with all data
         claim = Claim.objects.create(
             user=user,
             found_item=found_item,
+            supporting_images=supporting_images,
             **validated_data
         )
-
+        
+        # Send notification to the item finder
         Notification.objects.create(
             user=found_item.user,
             notification_type='claim_update',
@@ -512,16 +576,23 @@ class ClaimSerializer(serializers.ModelSerializer):
             found_item=found_item,
             claim=claim
         )
-
+        
         return claim
-
+    
     # -------------------------------------------------------------
     # UPDATE
     # -------------------------------------------------------------
     def update(self, instance, validated_data):
+        # Remove fields that shouldn't be updated
         validated_data.pop('found_item', None)
+        
+        # Handle supporting_images update
+        supporting_images = validated_data.pop('supporting_images', None)
+        if supporting_images is not None:
+            instance.supporting_images = supporting_images
+            instance.save()
+        
         return super().update(instance, validated_data)
-
 ###################################################################################################################################################################################################
 class MessageSerializer(serializers.ModelSerializer):
     sender_info = serializers.SerializerMethodField()
@@ -639,6 +710,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
