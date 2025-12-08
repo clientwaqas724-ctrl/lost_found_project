@@ -395,11 +395,15 @@ class UserItemsSerializer(serializers.Serializer):
         return FoundItemSerializer(found_items, many=True, context=self.context).data
 
 ###################################################################################################################################################################################################
+# serializers.py - Updated version
 class ClaimSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField(read_only=True)
+
+    # Backward compatibility
     user_email = serializers.SerializerMethodField()
     userEmail = serializers.SerializerMethodField()
 
+    # Required only during create
     found_item_id = serializers.UUIDField(write_only=True, required=False)
 
     found_item_title = serializers.CharField(source='found_item.title', read_only=True)
@@ -421,9 +425,9 @@ class ClaimSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at', 'resolved_at'
         ]
 
-    # ----------------------------
+    # -------------------------------------------------------------
     # HELPER FIELDS
-    # ----------------------------
+    # -------------------------------------------------------------
     def get_user_email(self, obj):
         return obj.user.email if obj.user and obj.user.email else ""
 
@@ -441,51 +445,36 @@ class ClaimSerializer(serializers.ModelSerializer):
             return obj.found_item.item_image.url
         return None
 
-    # ----------------------------
-    # SAFE FILE / STRING VALIDATION
-    # ----------------------------
-    def _normalize_file_field(self, value):
-        """
-        Accept both actual files or strings (URLs / paths from Android).
-        Convert invalid/empty values to None.
-        """
-        if value in ["", None, [], {}, 0]:
-            return None
-
-        # Already a file → OK
-        if hasattr(value, "read"):
-            return value
-
-        # It's a string → OK
-        if isinstance(value, str):
-            return value
-
-        raise serializers.ValidationError(
-            "Invalid file format. Must be a file or string path (Android compatible)."
-        )
-
-    # ----------------------------
-    # VALIDATION
-    # ----------------------------
+    # -------------------------------------------------------------
+    # VALIDATION - UPDATED for supporting_images as TextField
+    # -------------------------------------------------------------
     def validate(self, attrs):
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             raise serializers.ValidationError("Authentication required.")
 
-        if "proof_of_ownership" in attrs:
-            attrs["proof_of_ownership"] = self._normalize_file_field(attrs.get("proof_of_ownership"))
-
-        if "supporting_images" in attrs:
-            attrs["supporting_images"] = self._normalize_file_field(attrs.get("supporting_images"))
+        # Handle empty/null supporting_images
+        if 'supporting_images' in attrs:
+            if attrs['supporting_images'] in ["", None]:
+                attrs['supporting_images'] = None
+            elif isinstance(attrs['supporting_images'], str):
+                # Clean the string - remove any leading/trailing commas/whitespace
+                attrs['supporting_images'] = attrs['supporting_images'].strip()
+                if attrs['supporting_images'] == "":
+                    attrs['supporting_images'] = None
 
         is_create = self.instance is None
         found_item_id = attrs.get('found_item_id')
 
+        # ---------------------------
+        # CREATE
+        # ---------------------------
         if is_create:
             if not found_item_id:
                 raise serializers.ValidationError({
                     "found_item_id": "This field is required."
                 })
+
             try:
                 found_item = FoundItem.objects.get(id=found_item_id)
             except FoundItem.DoesNotExist:
@@ -493,11 +482,13 @@ class ClaimSerializer(serializers.ModelSerializer):
                     "found_item_id": "Found item does not exist."
                 })
 
+            # user cannot claim their own item
             if found_item.user == request.user:
                 raise serializers.ValidationError({
                     "detail": "You cannot claim your own found item."
                 })
 
+            # prevent duplicate claim
             if Claim.objects.filter(user=request.user, found_item=found_item).exists():
                 raise serializers.ValidationError({
                     "detail": "You have already submitted a claim for this item."
@@ -507,11 +498,12 @@ class ClaimSerializer(serializers.ModelSerializer):
 
         return attrs
 
-    # ----------------------------
+    # -------------------------------------------------------------
     # CREATE
-    # ----------------------------
+    # -------------------------------------------------------------
     def create(self, validated_data):
         user = self.context['request'].user
+
         found_item = validated_data.pop('found_item')
         validated_data.pop('found_item_id', None)
 
@@ -533,9 +525,9 @@ class ClaimSerializer(serializers.ModelSerializer):
 
         return claim
 
-    # ----------------------------
+    # -------------------------------------------------------------
     # UPDATE
-    # ----------------------------
+    # -------------------------------------------------------------
     def update(self, instance, validated_data):
         validated_data.pop('found_item_id', None)
         validated_data.pop('found_item', None)
@@ -657,6 +649,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
