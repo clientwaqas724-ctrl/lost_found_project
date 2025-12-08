@@ -387,7 +387,6 @@ class ClaimViewSet(viewsets.ModelViewSet):
     queryset = Claim.objects.all()
     serializer_class = ClaimSerializer
     permission_classes = [IsAuthenticated]
-
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def get_queryset(self):
@@ -397,11 +396,10 @@ class ClaimViewSet(viewsets.ModelViewSet):
         return Claim.objects.filter(user=user)
 
     def create(self, request, *args, **kwargs):
-        data = request.data.copy()
+        data = request.data.copy()  # avoid mutable dict issues
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)
-
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 #################################################################################################################################################################################################
 class MessageViewSet(viewsets.ModelViewSet):
@@ -926,6 +924,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
