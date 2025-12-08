@@ -388,15 +388,18 @@ class ClaimViewSet(viewsets.ModelViewSet):
     serializer_class = ClaimSerializer
     permission_classes = [IsAuthenticated]
 
-    # FIX: Allow both JSON + multipart/form-data (for file uploads)
+    # FIX → allow JSON + multipart + form for POST & PUT
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_queryset(self):
         user = self.request.user
+
+        # Admin → can see ALL
         if getattr(user, 'user_type', None) == 'admin':
             return Claim.objects.all()
-        return Claim.objects.filter(user=user)
 
+        # Normal user → only their claims
+        return Claim.objects.filter(user=user)
 ################################################################################################################################################################
 class MessageViewSet(viewsets.ModelViewSet):
     serializer_class = MessageSerializer
@@ -920,3 +923,4 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
