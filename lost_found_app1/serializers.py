@@ -402,11 +402,14 @@ class ClaimSerializer(serializers.ModelSerializer):
     user_email = serializers.SerializerMethodField()
     userEmail = serializers.SerializerMethodField()
 
-    # Accept multiple formats for found_item
-    found_item_id = serializers.UUIDField(write_only=True, required=False)
-    foundItem = serializers.UUIDField(write_only=True, required=False)
-    found_item = serializers.UUIDField(write_only=True, required=False)  # Add this line
+    # Accept camelCase fields from Android
+    foundItem = serializers.UUIDField(write_only=True, required=True, source='found_item_id')
+    claimDescription = serializers.CharField(write_only=True, required=True, source='claim_description')
+    proofOfOwnership = serializers.CharField(write_only=True, required=True, source='proof_of_ownership')
+    supportingImages = serializers.CharField(write_only=True, required=False, allow_null=True, source='supporting_images')
+    adminNotes = serializers.CharField(write_only=True, required=False, allow_null=True, source='admin_notes')
 
+    # Read-only fields for output
     found_item_title = serializers.CharField(source='found_item.title', read_only=True)
     found_item_image = serializers.SerializerMethodField()
     found_item = serializers.SerializerMethodField(read_only=True)
@@ -414,10 +417,13 @@ class ClaimSerializer(serializers.ModelSerializer):
     class Meta:
         model = Claim
         fields = [
-            'id', 'user', 'user_email', 'userEmail', 'found_item', 'found_item_id', 'foundItem',
-            'found_item_title', 'found_item_image', 'claim_description',
-            'proof_of_ownership', 'supporting_images', 'status', 'admin_notes',
-            'created_at', 'updated_at', 'resolved_at'
+            'id', 'user', 'user_email', 'userEmail', 
+            # Write-only camelCase fields
+            'foundItem', 'claimDescription', 'proofOfOwnership', 
+            'supportingImages', 'adminNotes',
+            # Read-only snake_case fields
+            'found_item', 'found_item_title', 'found_item_image',
+            'status', 'created_at', 'updated_at', 'resolved_at'
         ]
 
         read_only_fields = [
@@ -447,7 +453,7 @@ class ClaimSerializer(serializers.ModelSerializer):
         return None
 
     # -------------------------------------------------------------
-    # VALIDATION - Handle all possible field names
+    # VALIDATION
     # -------------------------------------------------------------
     def validate(self, attrs):
         request = self.context.get('request')
@@ -455,48 +461,11 @@ class ClaimSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Authentication required.")
 
         # Debug: Log what we're receiving
-        print(f"DEBUG - Received attrs: {attrs}")
-
-        # Get found_item ID from any possible field
-        found_item_id = None
-        
-        # Check all possible field names (order matters - check all)
-        if 'found_item_id' in attrs:
-            found_item_id = attrs.get('found_item_id')
-        elif 'foundItem' in attrs:
-            found_item_id = attrs.get('foundItem')
-        elif 'found_item' in attrs:
-            found_item_id = attrs.get('found_item')
-        
-        # Clean up all found_item fields from attrs
-        attrs.pop('found_item_id', None)
-        attrs.pop('foundItem', None)
-        attrs.pop('found_item', None)
-        
-        # Handle camelCase to snake_case conversion for other fields
-        field_mappings = {
-            'claimDescription': 'claim_description',
-            'proofOfOwnership': 'proof_of_ownership',
-            'supportingImages': 'supporting_images',
-            'adminNotes': 'admin_notes',
-        }
-
-        # Copy and convert camelCase fields to snake_case
-        for camel_field, snake_field in field_mappings.items():
-            if camel_field in attrs:
-                attrs[snake_field] = attrs.pop(camel_field)
-
-        # Handle empty/null supporting_images
-        if 'supporting_images' in attrs:
-            if attrs['supporting_images'] in ["", None]:
-                attrs['supporting_images'] = None
-            elif isinstance(attrs['supporting_images'], str):
-                # Clean the string
-                attrs['supporting_images'] = attrs['supporting_images'].strip()
-                if attrs['supporting_images'] == "":
-                    attrs['supporting_images'] = None
+        print(f"DEBUG - Received attrs keys: {list(attrs.keys())}")
+        print(f"DEBUG - Received attrs values: {attrs}")
 
         is_create = self.instance is None
+        found_item_id = attrs.get('found_item_id')  # This comes from 'foundItem' field
 
         # ---------------------------
         # CREATE
@@ -504,14 +473,14 @@ class ClaimSerializer(serializers.ModelSerializer):
         if is_create:
             if not found_item_id:
                 raise serializers.ValidationError({
-                    "found_item": "This field is required. Please provide found_item, found_item_id, or foundItem."
+                    "foundItem": "This field is required."
                 })
 
             try:
                 found_item = FoundItem.objects.get(id=found_item_id)
             except FoundItem.DoesNotExist:
                 raise serializers.ValidationError({
-                    "found_item": f"Found item with ID {found_item_id} does not exist."
+                    "foundItem": f"Found item with ID {found_item_id} does not exist."
                 })
 
             # user cannot claim their own item
@@ -532,7 +501,7 @@ class ClaimSerializer(serializers.ModelSerializer):
         return attrs
 
     # -------------------------------------------------------------
-    # CREATE - Simplified
+    # CREATE
     # -------------------------------------------------------------
     def create(self, validated_data):
         user = self.context['request'].user
@@ -563,8 +532,6 @@ class ClaimSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         # Remove any found_item related fields from update
         validated_data.pop('found_item', None)
-        validated_data.pop('found_item_id', None)
-        validated_data.pop('foundItem', None)
         return super().update(instance, validated_data)
 ###################################################################################################################################################################################################
 class MessageSerializer(serializers.ModelSerializer):
@@ -683,6 +650,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
