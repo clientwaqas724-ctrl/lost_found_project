@@ -400,7 +400,7 @@ class ClaimSerializer(serializers.ModelSerializer):
 
     # Backward compatibility
     user_email = serializers.SerializerMethodField()
-    userEmail = serializers.SerializerMethodField()  # Android camelCase
+    userEmail = serializers.SerializerMethodField()
 
     # Required only during create
     found_item_id = serializers.UUIDField(write_only=True, required=False)
@@ -424,10 +424,9 @@ class ClaimSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at', 'resolved_at'
         ]
 
-    # --------------------------------------------
+    # -------------------------------------------------------------
     # HELPER FIELDS
-    # --------------------------------------------
-
+    # -------------------------------------------------------------
     def get_user_email(self, obj):
         return obj.user.email if obj.user and obj.user.email else ""
 
@@ -445,34 +444,48 @@ class ClaimSerializer(serializers.ModelSerializer):
             return obj.found_item.item_image.url
         return None
 
-    # --------------------------------------------
+    # -------------------------------------------------------------
+    # FIX: SAFE FILE VALIDATION (NO MORE “NOT A FILE” ERRORS)
+    # -------------------------------------------------------------
+    def _normalize_file_field(self, value):
+        """Convert invalid file values to None (fixes JSON + Android empty string issue)."""
+        if value in ["", None, [], {}, 0]:
+            return None
+
+        # If it's already a file → OK
+        if hasattr(value, "read"):
+            return value
+
+        # Anything else → invalid for file field
+        raise serializers.ValidationError("Invalid file format. Must upload using multipart/form-data.")
+
+    # -------------------------------------------------------------
     # VALIDATION
-    # --------------------------------------------
+    # -------------------------------------------------------------
     def validate(self, attrs):
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             raise serializers.ValidationError("Authentication required.")
 
-        # FIX → Avoid "submitted data was not a file" error
-        proof = attrs.get("proof_of_ownership", None)
-        if proof is not None and not hasattr(proof, "read"):
-            raise serializers.ValidationError({
-                "proof_of_ownership": "Invalid file. Must be uploaded using multipart/form-data."
-            })
+        # Normalize file fields
+        if "proof_of_ownership" in attrs:
+            attrs["proof_of_ownership"] = self._normalize_file_field(attrs.get("proof_of_ownership"))
+
+        if "supporting_images" in attrs:
+            attrs["supporting_images"] = self._normalize_file_field(attrs.get("supporting_images"))
 
         is_create = self.instance is None
         found_item_id = attrs.get('found_item_id')
 
-        # ----------------------------------------------------
-        # CREATE (POST)
-        # ----------------------------------------------------
+        # ---------------------------
+        # CREATE
+        # ---------------------------
         if is_create:
             if not found_item_id:
                 raise serializers.ValidationError({
                     "found_item_id": "This field is required."
                 })
 
-            # Found item validation
             try:
                 found_item = FoundItem.objects.get(id=found_item_id)
             except FoundItem.DoesNotExist:
@@ -480,13 +493,13 @@ class ClaimSerializer(serializers.ModelSerializer):
                     "found_item_id": "Found item does not exist."
                 })
 
-            # Prevent claiming your own item
+            # user cannot claim their own item
             if found_item.user == request.user:
                 raise serializers.ValidationError({
                     "detail": "You cannot claim your own found item."
                 })
 
-            # Prevent duplicate claims
+            # prevent duplicate claim
             if Claim.objects.filter(user=request.user, found_item=found_item).exists():
                 raise serializers.ValidationError({
                     "detail": "You have already submitted a claim for this item."
@@ -494,12 +507,11 @@ class ClaimSerializer(serializers.ModelSerializer):
 
             attrs['found_item'] = found_item
 
-        # UPDATE: ignore found_item_id
         return attrs
 
-    # --------------------------------------------
+    # -------------------------------------------------------------
     # CREATE
-    # --------------------------------------------
+    # -------------------------------------------------------------
     def create(self, validated_data):
         user = self.context['request'].user
 
@@ -512,7 +524,7 @@ class ClaimSerializer(serializers.ModelSerializer):
             **validated_data
         )
 
-        # Auto-create notification
+        # notification
         Notification.objects.create(
             user=found_item.user,
             notification_type='claim_update',
@@ -524,9 +536,9 @@ class ClaimSerializer(serializers.ModelSerializer):
 
         return claim
 
-    # --------------------------------------------
+    # -------------------------------------------------------------
     # UPDATE
-    # --------------------------------------------
+    # -------------------------------------------------------------
     def update(self, instance, validated_data):
         validated_data.pop('found_item_id', None)
         validated_data.pop('found_item', None)
@@ -648,4 +660,5 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
