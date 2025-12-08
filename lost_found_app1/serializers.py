@@ -402,9 +402,10 @@ class ClaimSerializer(serializers.ModelSerializer):
     user_email = serializers.SerializerMethodField()
     userEmail = serializers.SerializerMethodField()
 
-    # Accept both snake_case and camelCase for write operations
+    # Accept multiple formats for found_item
     found_item_id = serializers.UUIDField(write_only=True, required=False)
-    foundItem = serializers.UUIDField(write_only=True, required=False, source='found_item_id')
+    foundItem = serializers.UUIDField(write_only=True, required=False)
+    found_item = serializers.UUIDField(write_only=True, required=False)  # Add this line
 
     found_item_title = serializers.CharField(source='found_item.title', read_only=True)
     found_item_image = serializers.SerializerMethodField()
@@ -446,21 +447,38 @@ class ClaimSerializer(serializers.ModelSerializer):
         return None
 
     # -------------------------------------------------------------
-    # VALIDATION - Handle both camelCase and snake_case
+    # VALIDATION - Handle all possible field names
     # -------------------------------------------------------------
     def validate(self, attrs):
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             raise serializers.ValidationError("Authentication required.")
 
-        # Handle camelCase to snake_case conversion for all fields
-        # Map camelCase field names to their snake_case equivalents
+        # Debug: Log what we're receiving
+        print(f"DEBUG - Received attrs: {attrs}")
+
+        # Get found_item ID from any possible field
+        found_item_id = None
+        
+        # Check all possible field names (order matters - check all)
+        if 'found_item_id' in attrs:
+            found_item_id = attrs.get('found_item_id')
+        elif 'foundItem' in attrs:
+            found_item_id = attrs.get('foundItem')
+        elif 'found_item' in attrs:
+            found_item_id = attrs.get('found_item')
+        
+        # Clean up all found_item fields from attrs
+        attrs.pop('found_item_id', None)
+        attrs.pop('foundItem', None)
+        attrs.pop('found_item', None)
+        
+        # Handle camelCase to snake_case conversion for other fields
         field_mappings = {
             'claimDescription': 'claim_description',
             'proofOfOwnership': 'proof_of_ownership',
             'supportingImages': 'supporting_images',
             'adminNotes': 'admin_notes',
-            'foundItem': 'found_item_id',
         }
 
         # Copy and convert camelCase fields to snake_case
@@ -479,7 +497,6 @@ class ClaimSerializer(serializers.ModelSerializer):
                     attrs['supporting_images'] = None
 
         is_create = self.instance is None
-        found_item_id = attrs.get('found_item_id')
 
         # ---------------------------
         # CREATE
@@ -487,14 +504,14 @@ class ClaimSerializer(serializers.ModelSerializer):
         if is_create:
             if not found_item_id:
                 raise serializers.ValidationError({
-                    "found_item_id": "This field is required."
+                    "found_item": "This field is required. Please provide found_item, found_item_id, or foundItem."
                 })
 
             try:
                 found_item = FoundItem.objects.get(id=found_item_id)
             except FoundItem.DoesNotExist:
                 raise serializers.ValidationError({
-                    "found_item_id": "Found item does not exist."
+                    "found_item": f"Found item with ID {found_item_id} does not exist."
                 })
 
             # user cannot claim their own item
@@ -509,27 +526,26 @@ class ClaimSerializer(serializers.ModelSerializer):
                     "detail": "You have already submitted a claim for this item."
                 })
 
+            # Add the found_item instance to attrs
             attrs['found_item'] = found_item
 
         return attrs
 
     # -------------------------------------------------------------
-    # CREATE
+    # CREATE - Simplified
     # -------------------------------------------------------------
     def create(self, validated_data):
         user = self.context['request'].user
+        found_item = validated_data.pop('found_item')  # This is the FoundItem instance
 
-        found_item = validated_data.pop('found_item')
-        validated_data.pop('found_item_id', None)
-        validated_data.pop('foundItem', None)  # Remove camelCase version if present
-
+        # Create the claim
         claim = Claim.objects.create(
             user=user,
             found_item=found_item,
             **validated_data
         )
 
-        # notification
+        # Send notification to the item owner
         Notification.objects.create(
             user=found_item.user,
             notification_type='claim_update',
@@ -545,9 +561,10 @@ class ClaimSerializer(serializers.ModelSerializer):
     # UPDATE
     # -------------------------------------------------------------
     def update(self, instance, validated_data):
-        validated_data.pop('found_item_id', None)
-        validated_data.pop('foundItem', None)  # Remove camelCase version
+        # Remove any found_item related fields from update
         validated_data.pop('found_item', None)
+        validated_data.pop('found_item_id', None)
+        validated_data.pop('foundItem', None)
         return super().update(instance, validated_data)
 ###################################################################################################################################################################################################
 class MessageSerializer(serializers.ModelSerializer):
@@ -666,6 +683,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
