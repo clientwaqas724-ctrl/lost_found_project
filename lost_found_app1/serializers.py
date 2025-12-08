@@ -402,10 +402,10 @@ class ClaimSerializer(serializers.ModelSerializer):
     user_email = serializers.SerializerMethodField()
     userEmail = serializers.SerializerMethodField()
 
-    # Accept camelCase fields from Android (now all NOT required)
-    foundItem = serializers.UUIDField(write_only=True, required=False, source='found_item_id')
-    claimDescription = serializers.CharField(write_only=True, required=False, source='claim_description')
-    proofOfOwnership = serializers.CharField(write_only=True, required=False, source='proof_of_ownership')
+    # All camelCase incoming fields — now ALL optional
+    foundItem = serializers.UUIDField(write_only=True, required=False, allow_null=True, source='found_item_id')
+    claimDescription = serializers.CharField(write_only=True, required=False, allow_null=True, source='claim_description')
+    proofOfOwnership = serializers.CharField(write_only=True, required=False, allow_null=True, source='proof_of_ownership')
     supportingImages = serializers.CharField(write_only=True, required=False, allow_null=True, source='supporting_images')
     adminNotes = serializers.CharField(write_only=True, required=False, allow_null=True, source='admin_notes')
 
@@ -418,18 +418,20 @@ class ClaimSerializer(serializers.ModelSerializer):
         model = Claim
         fields = [
             'id', 'user', 'user_email', 'userEmail',
-            # Write-only fields (all optional now)
+
+            # Optional write-only fields
             'foundItem', 'claimDescription', 'proofOfOwnership',
             'supportingImages', 'adminNotes',
+
             # Read-only fields
             'found_item', 'found_item_title', 'found_item_image',
             'status', 'created_at', 'updated_at', 'resolved_at'
         ]
 
         read_only_fields = [
-            'id', 'user', 'user_email', 'userEmail', 'found_item',
-            'found_item_title', 'found_item_image', 'status',
-            'created_at', 'updated_at', 'resolved_at'
+            'id', 'user', 'user_email', 'userEmail',
+            'found_item', 'found_item_title', 'found_item_image',
+            'status', 'created_at', 'updated_at', 'resolved_at'
         ]
 
     # -------------------------------------------------------------
@@ -442,34 +444,28 @@ class ClaimSerializer(serializers.ModelSerializer):
         return self.get_user_email(obj)
 
     def get_found_item(self, obj):
-        return str(obj.found_item.id) if obj.found_item else ""
+        return str(obj.found_item.id) if obj.found_item else None
 
     def get_found_item_image(self, obj):
         request = self.context.get('request')
         if obj.found_item and obj.found_item.item_image:
-            if request:
-                return request.build_absolute_uri(obj.found_item.item_image.url)
-            return obj.found_item.item_image.url
+            url = obj.found_item.item_image.url
+            return request.build_absolute_uri(url) if request else url
         return None
 
     # -------------------------------------------------------------
-    # VALIDATION
+    # VALIDATION — NOW EVERYTHING IS OPTIONAL
     # -------------------------------------------------------------
     def validate(self, attrs):
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             raise serializers.ValidationError("Authentication required.")
 
-        is_create = self.instance is None
+        # No more required fields on create
         found_item_id = attrs.get('found_item_id')
 
-        # Only check on CREATE
-        if is_create:
-            if not found_item_id:
-                raise serializers.ValidationError({
-                    "foundItem": "This field is required when creating a claim."
-                })
-
+        # If user provided found_item_id, we validate it.
+        if found_item_id:
             try:
                 found_item = FoundItem.objects.get(id=found_item_id)
             except FoundItem.DoesNotExist:
@@ -492,11 +488,11 @@ class ClaimSerializer(serializers.ModelSerializer):
         return attrs
 
     # -------------------------------------------------------------
-    # CREATE
+    # CREATE — allow creation even without found_item
     # -------------------------------------------------------------
     def create(self, validated_data):
         user = self.context['request'].user
-        found_item = validated_data.pop('found_item')
+        found_item = validated_data.pop('found_item', None)
 
         claim = Claim.objects.create(
             user=user,
@@ -504,14 +500,16 @@ class ClaimSerializer(serializers.ModelSerializer):
             **validated_data
         )
 
-        Notification.objects.create(
-            user=found_item.user,
-            notification_type='claim_update',
-            title='New Claim Received',
-            message=f'{user.username} has submitted a claim for your found item "{found_item.title}".',
-            found_item=found_item,
-            claim=claim
-        )
+        # Only create notification if found_item exists
+        if found_item:
+            Notification.objects.create(
+                user=found_item.user,
+                notification_type='claim_update',
+                title='New Claim Received',
+                message=f'{user.username} has submitted a claim for your found item "{found_item.title}".',
+                found_item=found_item,
+                claim=claim
+            )
 
         return claim
 
@@ -519,7 +517,7 @@ class ClaimSerializer(serializers.ModelSerializer):
     # UPDATE
     # -------------------------------------------------------------
     def update(self, instance, validated_data):
-        validated_data.pop('found_item', None)
+        validated_data.pop('found_item', None)  # Ignore updates to found_item
         return super().update(instance, validated_data)
 ###################################################################################################################################################################################################
 class MessageSerializer(serializers.ModelSerializer):
@@ -638,6 +636,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
