@@ -909,7 +909,6 @@ def admin_dashboard(request):
             'type': 'claim',
             'title': f"Claim by {claim.user.username}",
             'status': claim.status,
-            'description': claim.claimDescription,  # Added description
             'date': claim.created_at,
             'id': claim.id
         })
@@ -973,6 +972,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
