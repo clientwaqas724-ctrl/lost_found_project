@@ -391,20 +391,17 @@ class ClaimViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        # Admin sees all claims
-        if hasattr(user, 'user_type') and user.user_type == 'admin':
+        if hasattr(user, "user_type") and user.user_type == "admin":
             return Claim.objects.all().order_by('-created_at')
-
-        # Normal user sees only their claims
         return Claim.objects.filter(user=user).order_by('-created_at')
 
+    # ---------------- SIMPLE CREATE ----------------
     def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+
         try:
-            serializer = self.get_serializer(data=request.data)
             serializer.is_valid(raise_exception=True)
-
             self.perform_create(serializer)
-
             return Response(
                 {
                     "message": "Claim submitted successfully!",
@@ -416,24 +413,28 @@ class ClaimViewSet(viewsets.ModelViewSet):
         except ValidationError as e:
             return Response(
                 {
-                    "error": "Validation Error",
-                    "details": e.detail,
-                    "message": "Please check your input and try again."
+                    "message": "Duplicate claim",
+                    "details": e.detail
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
-        except Exception as e:
-            return Response(
-                {
-                    "error": "Server Error",
-                    "details": str(e),
-                    "message": "Something went wrong. Try again."
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
 
-    def perform_create(self, serializer):
+    # ---------------- SIMPLE UPDATE ----------------
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", True)
+        instance = self.get_object()
+
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
         serializer.save()
+
+        return Response(
+            {
+                "message": "Claim updated successfully!",
+                "data": serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
 #################################################################################################################################################################################################
 class MessageViewSet(viewsets.ModelViewSet):
     serializer_class = MessageSerializer
@@ -963,6 +964,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
