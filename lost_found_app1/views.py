@@ -386,31 +386,62 @@ class MyItemsView(APIView):
 
 ###########################################################################################################################################################################################
 class ClaimViewSet(viewsets.ModelViewSet):
-    queryset = Claim.objects.all()
     serializer_class = ClaimSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_queryset(self):
+        user = self.request.user
+        if hasattr(user, 'user_type') and user.user_type == 'admin':
+            return Claim.objects.all().order_by('-created_at')
+        return Claim.objects.filter(user=user).order_by('-created_at')
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        found_item_id = self.request.data.get("foundItem")
+
+        if not found_item_id:
+            raise ValidationError({
+                "foundItem": "Found item ID is required."
+            })
+
+        try:
+            found_item = FoundItem.objects.get(id=found_item_id)
+        except ObjectDoesNotExist:
+            raise ValidationError({
+                "foundItem": f"Found item with ID {found_item_id} does not exist."
+            })
+
+        # Prevent duplicate claim
+        if Claim.objects.filter(user=user, found_item_id=found_item_id).exists():
+            raise ValidationError({
+                "detail": "You have already submitted a claim for this item."
+            })
+
+        try:
+            serializer.save()
+        except IntegrityError:
+            raise ValidationError({
+                "detail": "You have already submitted a claim for this item."
+            })
+        except Exception as e:
+            raise ValidationError({
+                "detail": f"Failed to create claim: {str(e)}"
+            })
+
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        if serializer.is_valid():  # only save if valid
-            self.perform_create(serializer)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        else:
-            # Return validation errors instead of raising 500
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    def update(self, request, *args, **kwargs):
-        partial = kwargs.pop('partial', False)
-        instance = self.get_object()
-        serializer = self.get_serializer(instance, data=request.data, partial=partial)
-        if serializer.is_valid():
-            self.perform_update(serializer)
-            return Response(serializer.data)
-        else:
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    def partial_update(self, request, *args, **kwargs):
-        return self.update(request, partial=True)
+        try:
+            response = super().create(request, *args, **kwargs)
+            response.data['message'] = "Claim submitted successfully!"
+            return response
+        except ValidationError as e:
+            return Response(
+                {
+                    "error": "Validation Error",
+                    "details": e.detail,
+                    "message": "Please check your input and try again."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
 #################################################################################################################################################################################################
 class MessageViewSet(viewsets.ModelViewSet):
     serializer_class = MessageSerializer
@@ -940,6 +971,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
