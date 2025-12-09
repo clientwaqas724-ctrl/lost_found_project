@@ -212,9 +212,7 @@ class Claim(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='claims')
     found_item = models.ForeignKey(FoundItem, on_delete=models.CASCADE, related_name='claims')
-    
-    claimDescription = models.TextField()
-
+    claim_description = models.TextField(blank=True, null=True)
     proof_of_ownership = models.TextField(blank=True)
 
     # IMPORTANT:
@@ -294,4 +292,5 @@ class ImageSearchLog(models.Model):
         ordering = ['-created_at']
     
     def __str__(self):
+
         return f"Image Search - {self.search_type} - {self.created_at.strftime('%Y-%m-%d %H:%M')}"
