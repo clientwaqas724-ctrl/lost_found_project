@@ -395,79 +395,34 @@ class UserItemsSerializer(serializers.Serializer):
 
 ###################################################################################################################################################################################################
 class ClaimSerializer(serializers.ModelSerializer):
-
-    # Direct camelCase fields from frontend
-    foundItem = serializers.CharField(write_only=True, required=False)
-    claimDescription = serializers.CharField(write_only=True, required=False)
-    proofOfOwnership = serializers.CharField(write_only=True, required=False)
-    supportingImages = serializers.CharField(write_only=True, required=False, allow_null=True)
-    status = serializers.CharField(write_only=True, required=False)
-    adminNotes = serializers.CharField(write_only=True, required=False, allow_null=True)
-
     class Meta:
         model = Claim
-        fields = [
-            'id',
-            'foundItem', 'claimDescription', 'proofOfOwnership',
-            'supportingImages', 'status', 'adminNotes',
-            'created_at', 'updated_at'
-        ]
+        fields = '__all__'
 
-    # ---------------- SIMPLE CREATE ----------------
     def create(self, validated_data):
+        """
+        Safely create a Claim instance.
+        Ensure no NULL is passed to fields that the database expects as NOT NULL.
+        """
         user = self.context['request'].user
+        found_item = validated_data['found_item']
 
-        found_item_id = validated_data.get("foundItem")
-        found_item = None
-        if found_item_id:
-            try:
-                found_item = FoundItem.objects.get(id=found_item_id)
-            except:
-                pass  # Do not validate strictly
-
-        # Prevent duplicate
-        if found_item and Claim.objects.filter(user=user, found_item=found_item).exists():
-            raise serializers.ValidationError({
-                "detail": "You have already submitted a claim for this item."
-            })
+        # Use empty string if value is None
+        claim_description = validated_data.get('claimDescription') or ""
+        proof_of_ownership = validated_data.get('proofOfOwnership') or ""
+        supporting_images = validated_data.get('supportingImages', [])
+        status = validated_data.get('status', 'pending')
+        admin_notes = validated_data.get('adminNotes') or ""
 
         return Claim.objects.create(
             user=user,
             found_item=found_item,
-            claim_description=validated_data.get("claimDescription"),
-            proof_of_ownership=validated_data.get("proofOfOwnership"),
-            supporting_images=validated_data.get("supportingImages"),
-            status=validated_data.get("status", "pending"),
-            admin_notes=validated_data.get("adminNotes")
+            claim_description=claim_description,
+            proof_of_ownership=proof_of_ownership,
+            supporting_images=supporting_images,
+            status=status,
+            admin_notes=admin_notes
         )
-
-    # ---------------- SIMPLE UPDATE ----------------
-    def update(self, instance, validated_data):
-
-        # Only update what comes from frontend
-        if "claimDescription" in validated_data:
-            instance.claim_description = validated_data["claimDescription"]
-
-        if "proofOfOwnership" in validated_data:
-            instance.proof_of_ownership = validated_data["proofOfOwnership"]
-
-        if "supportingImages" in validated_data:
-            instance.supporting_images = validated_data["supportingImages"]
-
-        if "status" in validated_data:
-            instance.status = validated_data["status"]
-
-        if "adminNotes" in validated_data:
-            instance.admin_notes = validated_data["adminNotes"]
-
-        if "foundItem" in validated_data:
-            try:
-                instance.found_item = FoundItem.objects.get(id=validated_data["foundItem"])
-            except:
-                pass  # ignore errors
-
-        instance.save()
-        return instance
 ###################################################################################################################################################################################################
 class MessageSerializer(serializers.ModelSerializer):
     sender_info = serializers.SerializerMethodField()
@@ -585,6 +540,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
