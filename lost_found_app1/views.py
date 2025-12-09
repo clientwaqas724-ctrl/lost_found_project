@@ -400,9 +400,7 @@ class ClaimViewSet(viewsets.ModelViewSet):
         found_item_id = self.request.data.get("foundItem")
 
         if not found_item_id:
-            raise ValidationError({
-                "foundItem": "Found item ID is required."
-            })
+            raise ValidationError({"foundItem": "Found item ID is required."})
 
         try:
             found_item = FoundItem.objects.get(id=found_item_id)
@@ -433,6 +431,7 @@ class ClaimViewSet(viewsets.ModelViewSet):
             response = super().create(request, *args, **kwargs)
             response.data['message'] = "Claim submitted successfully!"
             return response
+
         except ValidationError as e:
             return Response(
                 {
@@ -442,7 +441,6 @@ class ClaimViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
-
 #################################################################################################################################################################################################
 class MessageViewSet(viewsets.ModelViewSet):
     serializer_class = MessageSerializer
@@ -972,6 +970,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
