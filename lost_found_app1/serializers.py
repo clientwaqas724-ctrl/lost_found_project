@@ -395,13 +395,14 @@ class UserItemsSerializer(serializers.Serializer):
 
 ###################################################################################################################################################################################################
 class ClaimSerializer(serializers.ModelSerializer):
-    # Accept camelCase from frontend
-    foundItem = serializers.CharField(write_only=True, required=True)
-    claimDescription = serializers.CharField(write_only=True)
-    proofOfOwnership = serializers.CharField(write_only=True)
-    supportingImages = serializers.CharField(write_only=False, allow_null=True, required=False)
+
+    # Direct camelCase fields from frontend
+    foundItem = serializers.CharField(write_only=True, required=False)
+    claimDescription = serializers.CharField(write_only=True, required=False)
+    proofOfOwnership = serializers.CharField(write_only=True, required=False)
+    supportingImages = serializers.CharField(write_only=True, required=False, allow_null=True)
     status = serializers.CharField(write_only=True, required=False)
-    adminNotes = serializers.CharField(write_only=True, allow_null=True, required=False)
+    adminNotes = serializers.CharField(write_only=True, required=False, allow_null=True)
 
     class Meta:
         model = Claim
@@ -412,42 +413,61 @@ class ClaimSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
 
+    # ---------------- SIMPLE CREATE ----------------
     def create(self, validated_data):
-        # Mapping camelCase → snake_case (DB fields)
-        found_item_id = validated_data.pop("foundItem")
-        claim_description = validated_data.pop("claimDescription")
-        proof_of_ownership = validated_data.pop("proofOfOwnership")
-        supporting_images = validated_data.pop("supportingImages", None)
-        status = validated_data.pop("status", "pending")
-        admin_notes = validated_data.pop("adminNotes", None)
-
         user = self.context['request'].user
 
-        # Validate found item
-        try:
-            found_item = FoundItem.objects.get(id=found_item_id)
-        except FoundItem.DoesNotExist:
-            raise serializers.ValidationError({
-                "foundItem": f"Found item with ID {found_item_id} does not exist."
-            })
+        found_item_id = validated_data.get("foundItem")
+        found_item = None
+        if found_item_id:
+            try:
+                found_item = FoundItem.objects.get(id=found_item_id)
+            except:
+                pass  # Do not validate strictly
 
-        # Prevent duplicate claim
-        if Claim.objects.filter(user=user, found_item=found_item).exists():
+        # Prevent duplicate
+        if found_item and Claim.objects.filter(user=user, found_item=found_item).exists():
             raise serializers.ValidationError({
                 "detail": "You have already submitted a claim for this item."
             })
 
-        claim = Claim.objects.create(
+        return Claim.objects.create(
             user=user,
             found_item=found_item,
-            claim_description=claim_description,
-            proof_of_ownership=proof_of_ownership,
-            supporting_images=supporting_images,
-            status=status,
-            admin_notes=admin_notes
+            claim_description=validated_data.get("claimDescription"),
+            proof_of_ownership=validated_data.get("proofOfOwnership"),
+            supporting_images=validated_data.get("supportingImages"),
+            status=validated_data.get("status", "pending"),
+            admin_notes=validated_data.get("adminNotes")
         )
 
-        return claim
+    # ---------------- SIMPLE UPDATE ----------------
+    def update(self, instance, validated_data):
+
+        # Only update what comes from frontend
+        if "claimDescription" in validated_data:
+            instance.claim_description = validated_data["claimDescription"]
+
+        if "proofOfOwnership" in validated_data:
+            instance.proof_of_ownership = validated_data["proofOfOwnership"]
+
+        if "supportingImages" in validated_data:
+            instance.supporting_images = validated_data["supportingImages"]
+
+        if "status" in validated_data:
+            instance.status = validated_data["status"]
+
+        if "adminNotes" in validated_data:
+            instance.admin_notes = validated_data["adminNotes"]
+
+        if "foundItem" in validated_data:
+            try:
+                instance.found_item = FoundItem.objects.get(id=validated_data["foundItem"])
+            except:
+                pass  # ignore errors
+
+        instance.save()
+        return instance
 ###################################################################################################################################################################################################
 class MessageSerializer(serializers.ModelSerializer):
     sender_info = serializers.SerializerMethodField()
@@ -565,6 +585,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
