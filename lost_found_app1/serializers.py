@@ -476,7 +476,7 @@ class ClaimSerializer(serializers.ModelSerializer):
     def validate_supportingImagesInput(self, value):
         """Process supporting images from input string."""
         if not value:
-            return []
+            return []  # allow empty list
         imgs = value.strip()
         if imgs.startswith("[") and imgs.endswith("]"):
             try:
@@ -486,11 +486,9 @@ class ClaimSerializer(serializers.ModelSerializer):
                 imgs_list = [i.strip() for i in imgs_clean.split(",") if i.strip()]
         else:
             imgs_list = [i.strip() for i in imgs.split(",") if i.strip()]
-        # URL validation
-        for url in imgs_list:
-            if not url.startswith(("http://", "https://")):
-                raise serializers.ValidationError(f"Invalid URL format: {url}")
-        return imgs_list
+        # Filter valid URLs only
+        valid_urls = [url for url in imgs_list if url.startswith(("http://", "https://"))]
+        return valid_urls
 
     def validate(self, attrs):
         claim_desc = attrs.get('claimDescription', '').strip()
@@ -534,7 +532,6 @@ class ClaimSerializer(serializers.ModelSerializer):
         if 'supporting_images' in validated_data:
             instance.supporting_images = validated_data.pop('supporting_images')
         return super().update(instance, validated_data)
-
 ###################################################################################################################################################################################################
 class MessageSerializer(serializers.ModelSerializer):
     sender_info = serializers.SerializerMethodField()
@@ -652,6 +649,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
