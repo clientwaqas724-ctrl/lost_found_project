@@ -856,6 +856,7 @@ def user_dashboard(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, IsAdminOnly])
 def admin_dashboard(request):
+    # Aggregate stats
     stats = {
         'total_lost_items': LostItem.objects.count(),
         'total_found_items': FoundItem.objects.count(),
@@ -872,13 +873,15 @@ def admin_dashboard(request):
         ).count(),
     }
     
+    # Fetch recent records
     recent_lost = LostItem.objects.all().order_by('-created_at')[:5]
     recent_found = FoundItem.objects.all().order_by('-created_at')[:5]
     recent_claims = Claim.objects.all().order_by('-created_at')[:5]
     recent_users = User.objects.all().order_by('-created_at')[:5]
     
     recent_activities = []
-    
+
+    # Recent lost items
     for item in recent_lost:
         recent_activities.append({
             'type': 'lost_item',
@@ -889,6 +892,7 @@ def admin_dashboard(request):
             'id': item.id
         })
     
+    # Recent found items
     for item in recent_found:
         recent_activities.append({
             'type': 'found_item',
@@ -899,15 +903,18 @@ def admin_dashboard(request):
             'id': item.id
         })
     
+    # Recent claims
     for claim in recent_claims:
         recent_activities.append({
             'type': 'claim',
             'title': f"Claim by {claim.user.username}",
             'status': claim.status,
-            'description': claim.claimDescription,  # optional
+            'description': claim.claimDescription,  # Added description
             'date': claim.created_at,
             'id': claim.id
         })
+    
+    # Recent user registrations
     for user in recent_users:
         recent_activities.append({
             'type': 'user_registration',
@@ -917,14 +924,14 @@ def admin_dashboard(request):
             'id': user.id
         })
     
+    # Sort all recent activities by date descending
     recent_activities.sort(key=lambda x: x['date'], reverse=True)
-    recent_activities = recent_activities[:15]
-    
+    recent_activities = recent_activities[:15]  # Limit to 15
+
     stats['recent_activities'] = recent_activities
     
     serializer = AdminDashboardStatsSerializer(stats)
     return Response(serializer.data)
-
 ################################################################################################################################################################
 @api_view(['POST'])
 @permission_classes([IsAuthenticated, IsAdminOnly])
@@ -966,6 +973,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
