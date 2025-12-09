@@ -424,6 +424,7 @@ class ClaimViewSet(viewsets.ModelViewSet):
                 "detail": "You have already submitted a claim for this item."
             })
         except Exception as e:
+            logger.error(f"Failed to create claim: {str(e)}")
             raise ValidationError({
                 "detail": f"Failed to create claim: {str(e)}"
             })
@@ -434,6 +435,7 @@ class ClaimViewSet(viewsets.ModelViewSet):
             response.data['message'] = "Claim submitted successfully!"
             return response
         except ValidationError as e:
+            logger.error(f"Claim creation validation error: {e.detail}")
             return Response(
                 {
                     "error": "Validation Error",
@@ -971,6 +973,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
