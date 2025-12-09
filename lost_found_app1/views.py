@@ -397,27 +397,21 @@ class ClaimViewSet(viewsets.ModelViewSet):
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data, context={'request': request})
-        try:
-            serializer.is_valid(raise_exception=True)
-            self.perform_create(serializer)
-            return Response(
-                {"message": "Claim submitted successfully!", "data": serializer.data},
-                status=status.HTTP_201_CREATED
-            )
-        except ValidationError as e:
-            return Response(
-                {"message": "Duplicate claim or validation error", "details": e.detail},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        serializer.is_valid(raise_exception=False)  # ignore validation
+        claim = serializer.save()
+        return Response(
+            {"message": "Claim submitted successfully!", "data": ClaimSerializer(claim).data},
+            status=status.HTTP_201_CREATED
+        )
 
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop("partial", True)
         instance = self.get_object()
         serializer = self.get_serializer(instance, data=request.data, partial=partial, context={'request': request})
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
+        serializer.is_valid(raise_exception=False)  # ignore validation
+        claim = serializer.save()
         return Response(
-            {"message": "Claim updated successfully!", "data": serializer.data},
+            {"message": "Claim updated successfully!", "data": ClaimSerializer(claim).data},
             status=status.HTTP_200_OK
         )
 #################################################################################################################################################################################################
@@ -949,6 +943,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
