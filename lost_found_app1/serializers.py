@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 import os
 import uuid
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+import json
 ###################################################################################################################################################################################################
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(
@@ -395,18 +396,145 @@ class UserItemsSerializer(serializers.Serializer):
 
 ###################################################################################################################################################################################################
 class ClaimSerializer(serializers.ModelSerializer):
+    user = serializers.StringRelatedField(read_only=True)
+    user_email = serializers.SerializerMethodField()
+    userEmail = serializers.SerializerMethodField()
+    found_item_title = serializers.CharField(source='found_item.title', read_only=True)
+    found_item_image = serializers.SerializerMethodField()
+
+    supportingImages = serializers.ListField(
+        child=serializers.CharField(),
+        read_only=True,
+        source='supporting_images'
+    )
+
+    # Input fields
+    foundItem = serializers.PrimaryKeyRelatedField(
+        queryset=FoundItem.objects.all(),
+        write_only=True,
+        required=True,
+        source='found_item'
+    )
+
+    claimDescription = serializers.CharField(
+        required=True,
+        allow_blank=False
+    )
+
+    proofOfOwnership = serializers.CharField(
+        source='proof_of_ownership',
+        required=True,
+        allow_blank=False
+    )
+
+    adminNotes = serializers.CharField(
+        source='admin_notes',
+        required=False,
+        allow_blank=True,
+        allow_null=True
+    )
+
+    supportingImagesInput = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        allow_null=True
+    )
+
     class Meta:
         model = Claim
-        fields = '__all__'
-        extra_kwargs = {
-            'found_item': {'required': False, 'allow_null': True},
-            'claim_description': {'required': False, 'allow_null': True},
-            'proof_of_ownership': {'required': False, 'allow_null': True},
-            'supporting_images': {'required': False, 'allow_null': True},  # removed allow_blank
-            'status': {'required': False, 'allow_null': True},
-            'admin_notes': {'required': False, 'allow_null': True},
-            'user': {'required': False, 'allow_null': True},
-        }
+        fields = [
+            'id', 'user', 'user_email', 'userEmail',
+            'foundItem', 'claimDescription', 'proofOfOwnership',
+            'supportingImagesInput', 'supportingImages',
+            'status', 'adminNotes',
+            'found_item_title', 'found_item_image',
+            'created_at', 'updated_at', 'resolved_at'
+        ]
+        read_only_fields = [
+            'id', 'user', 'user_email', 'userEmail',
+            'supportingImages', 'found_item_title', 'found_item_image',
+            'status', 'created_at', 'updated_at', 'resolved_at'
+        ]
+
+    # ------------------- Getters -------------------
+    def get_user_email(self, obj):
+        return obj.user.email if obj.user else ""
+
+    def get_userEmail(self, obj):
+        return self.get_user_email(obj)
+
+    def get_found_item_image(self, obj):
+        if obj.found_item and getattr(obj.found_item, 'item_image', None):
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.found_item.item_image.url)
+            return obj.found_item.item_image.url
+        return None
+
+    # ------------------- Validation -------------------
+    def validate_supportingImagesInput(self, value):
+        """Process supporting images from input string."""
+        if not value:
+            return []
+        imgs = value.strip()
+        if imgs.startswith("[") and imgs.endswith("]"):
+            try:
+                imgs_list = json.loads(imgs)
+            except Exception:
+                imgs_clean = imgs[1:-1].replace('"', '').replace("'", "")
+                imgs_list = [i.strip() for i in imgs_clean.split(",") if i.strip()]
+        else:
+            imgs_list = [i.strip() for i in imgs.split(",") if i.strip()]
+        # URL validation
+        for url in imgs_list:
+            if not url.startswith(("http://", "https://")):
+                raise serializers.ValidationError(f"Invalid URL format: {url}")
+        return imgs_list
+
+    def validate(self, attrs):
+        claim_desc = attrs.get('claimDescription', '').strip()
+        proof_desc = attrs.get('proof_of_ownership', '').strip()
+
+        if not claim_desc:
+            raise serializers.ValidationError({
+                "claimDescription": "Claim description is required and cannot be empty."
+            })
+        elif len(claim_desc) < 20:
+            raise serializers.ValidationError({
+                "claimDescription": "Please provide more details (at least 20 characters)."
+            })
+
+        if not proof_desc:
+            raise serializers.ValidationError({
+                "proofOfOwnership": "Proof of ownership is required and cannot be empty."
+            })
+        elif len(proof_desc) < 20:
+            raise serializers.ValidationError({
+                "proofOfOwnership": "Please provide more details (at least 20 characters)."
+            })
+
+        # Process supporting images
+        if 'supportingImagesInput' in self.initial_data:
+            attrs['supporting_images'] = self.validate_supportingImagesInput(
+                self.initial_data.get('supportingImagesInput')
+            )
+
+        return attrs
+
+    # ------------------- CREATE -------------------
+    def create(self, validated_data):
+        user = self.context['request'].user
+        validated_data['user'] = user
+        validated_data.pop('supportingImagesInput', None)
+        return Claim.objects.create(**validated_data)
+
+    # ------------------- UPDATE -------------------
+    def update(self, instance, validated_data):
+        if 'supporting_images' in validated_data:
+            instance.supporting_images = validated_data.pop('supporting_images')
+        return super().update(instance, validated_data)
+
 ###################################################################################################################################################################################################
 class MessageSerializer(serializers.ModelSerializer):
     sender_info = serializers.SerializerMethodField()
@@ -524,6 +652,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
