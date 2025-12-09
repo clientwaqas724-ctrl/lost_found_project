@@ -397,7 +397,7 @@ class ClaimViewSet(viewsets.ModelViewSet):
 
     # ---------------- SIMPLE CREATE ----------------
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
+        serializer = self.get_serializer(data=request.data, context={'request': request})
 
         try:
             serializer.is_valid(raise_exception=True)
@@ -413,7 +413,7 @@ class ClaimViewSet(viewsets.ModelViewSet):
         except ValidationError as e:
             return Response(
                 {
-                    "message": "Duplicate claim",
+                    "message": "Duplicate claim or validation error",
                     "details": e.detail
                 },
                 status=status.HTTP_400_BAD_REQUEST
@@ -424,7 +424,7 @@ class ClaimViewSet(viewsets.ModelViewSet):
         partial = kwargs.pop("partial", True)
         instance = self.get_object()
 
-        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer = self.get_serializer(instance, data=request.data, partial=partial, context={'request': request})
         serializer.is_valid(raise_exception=True)
         serializer.save()
 
@@ -964,6 +964,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
