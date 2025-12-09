@@ -473,42 +473,36 @@ class ClaimSerializer(serializers.ModelSerializer):
 
     # ------------------- Validation -------------------
     def validate_supportingImagesInput(self, value):
-        """Process supporting images from input string."""
-        if not value:
+        """Process supporting images safely (optional)."""
+        if not value or value in ["", "null", None]:
             return []
-        imgs = value.strip()
-        if imgs.startswith("[") and imgs.endswith("]"):
-            import json
-            try:
-                imgs_list = json.loads(imgs)
-            except Exception:
-                imgs_clean = imgs[1:-1].replace('"', '').replace("'", "")
-                imgs_list = [i.strip() for i in imgs_clean.split(",") if i.strip()]
-        else:
-            imgs_list = [i.strip() for i in imgs.split(",") if i.strip()]
-        # URL validation
-        for url in imgs_list:
-            if not url.startswith(("http://", "https://")):
-                raise serializers.ValidationError(f"Invalid URL format: {url}")
-        return imgs_list
+
+        import json
+        try:
+            imgs = json.loads(value)
+            if not isinstance(imgs, list):
+                return []
+        except:
+            return []
+
+        return imgs
 
     def validate(self, attrs):
-        # Required fields
+        # Validate claim description
         if not attrs.get('claimDescription', '').strip():
             raise serializers.ValidationError({
-                "claimDescription": "Claim description is required and cannot be empty."
+                "claimDescription": "Claim description is required."
             })
 
-        if not attrs.get('proof_of_ownership', '').strip():
+        # Validate proof of ownership
+        if not attrs.get('proof_of_ownership', None):
             raise serializers.ValidationError({
-                "proofOfOwnership": "Proof of ownership is required and cannot be empty."
+                "proofOfOwnership": "Proof of ownership is required."
             })
 
         # Process supporting images
-        if 'supportingImagesInput' in self.initial_data:
-            attrs['supporting_images'] = self.validate_supportingImagesInput(
-                self.initial_data.get('supportingImagesInput')
-            )
+        raw_images = self.initial_data.get('supportingImagesInput')
+        attrs['supporting_images'] = self.validate_supportingImagesInput(raw_images)
 
         return attrs
 
@@ -517,16 +511,20 @@ class ClaimSerializer(serializers.ModelSerializer):
         user = self.context['request'].user
         validated_data['user'] = user
 
-        # Remove serializer-only fields
         validated_data.pop('supportingImagesInput', None)
+        supporting_images = validated_data.pop('supporting_images', [])
 
-        # Create Claim
-        return Claim.objects.create(**validated_data)
+        claim = Claim.objects.create(**validated_data)
+        claim.supporting_images = supporting_images
+        claim.save()
+
+        return claim
 
     # ------------------- UPDATE -------------------
     def update(self, instance, validated_data):
         if 'supporting_images' in validated_data:
             instance.supporting_images = validated_data.pop('supporting_images')
+
         return super().update(instance, validated_data)
 
 ###################################################################################################################################################################################################
@@ -646,6 +644,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
