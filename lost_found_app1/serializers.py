@@ -395,55 +395,9 @@ class UserItemsSerializer(serializers.Serializer):
 
 ###################################################################################################################################################################################################
 class ClaimSerializer(serializers.ModelSerializer):
-    # Map frontend params
-    foundItem = serializers.CharField(source='found_item.id', write_only=True)
-    claimDescription = serializers.CharField(source='claim_description')
-    proofOfOwnership = serializers.CharField(source='proof_of_ownership')
-    supportingImages = serializers.CharField(source='supporting_images', required=False, allow_blank=True, allow_null=True)
-    status = serializers.CharField(default='pending')
-    adminNotes = serializers.CharField(source='admin_notes', required=False, allow_blank=True, allow_null=True)
-
     class Meta:
         model = Claim
-        fields = [
-            'id',
-            'foundItem',
-            'claimDescription',
-            'proofOfOwnership',
-            'supportingImages',
-            'status',
-            'adminNotes',
-            'created_at',
-            'updated_at',
-            'resolved_at',
-        ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'resolved_at']
-
-    def create(self, validated_data):
-        user = self.context['request'].user
-        found_item_id = validated_data.pop('found_item')['id']
-        claim = Claim.objects.create(
-            user=user,
-            found_item_id=found_item_id,
-            claim_description=validated_data.get('claim_description', ''),
-            proof_of_ownership=validated_data.get('proof_of_ownership', ''),
-            supporting_images=validated_data.get('supporting_images', ''),
-            status=validated_data.get('status', 'pending'),
-            admin_notes=validated_data.get('admin_notes', '')
-        )
-        return claim
-
-    def update(self, instance, validated_data):
-        # Forcefully update fields without validation errors
-        found_item_id = validated_data.get('found_item', {}).get('id', instance.found_item_id)
-        instance.found_item_id = found_item_id
-        instance.claim_description = validated_data.get('claim_description', instance.claim_description)
-        instance.proof_of_ownership = validated_data.get('proof_of_ownership', instance.proof_of_ownership)
-        instance.supporting_images = validated_data.get('supporting_images', instance.supporting_images)
-        instance.status = validated_data.get('status', instance.status)
-        instance.admin_notes = validated_data.get('admin_notes', instance.admin_notes)
-        instance.save()
-        return instance
+        fields = '__all__'
 ###################################################################################################################################################################################################
 class MessageSerializer(serializers.ModelSerializer):
     sender_info = serializers.SerializerMethodField()
@@ -561,6 +515,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
