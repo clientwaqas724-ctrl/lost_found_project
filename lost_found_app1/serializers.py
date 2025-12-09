@@ -396,23 +396,25 @@ class UserItemsSerializer(serializers.Serializer):
 
 ###################################################################################################################################################################################################
 class ClaimSerializer(serializers.ModelSerializer):
-    # Map frontend field names to model fields
+    # Frontend → Model field mapping
     foundItem = serializers.PrimaryKeyRelatedField(
         queryset=FoundItem.objects.all(),
         write_only=True,
-        source='found_item',
-        required=True
+        required=True,
+        source='found_item'
     )
+
     claimDescription = serializers.CharField(
-        source='claimDescription',
         required=True,
         allow_blank=False
     )
+
     proofOfOwnership = serializers.CharField(
-        source='proof_of_ownership',
         required=True,
-        allow_blank=False
+        allow_blank=False,
+        source='proof_of_ownership'
     )
+
     supportingImagesInput = serializers.CharField(
         write_only=True,
         required=False,
@@ -423,31 +425,50 @@ class ClaimSerializer(serializers.ModelSerializer):
     class Meta:
         model = Claim
         fields = [
-            'id',
-            'foundItem',
-            'claimDescription',
-            'proofOfOwnership',
-            'supportingImagesInput',
-            'status',
-            'admin_notes',
-            'created_at',
-            'updated_at',
-            'resolved_at'
+            "id",
+            "foundItem",
+            "claimDescription",
+            "proofOfOwnership",
+            "supportingImagesInput",
+            "supporting_images",
+            "status",
+            "admin_notes",
+            "created_at",
+            "updated_at",
+            "resolved_at"
         ]
+        read_only_fields = ["supporting_images", "status"]
+
+    def validate(self, attrs):
+        # Minimum 20 chars
+        if len(attrs.get("claimDescription", "")) < 20:
+            raise serializers.ValidationError({
+                "claimDescription": "Please enter at least 20 characters."
+            })
+
+        if len(attrs.get("proof_of_ownership", "")) < 20:
+            raise serializers.ValidationError({
+                "proofOfOwnership": "Please enter at least 20 characters."
+            })
+
+        return attrs
 
     def create(self, validated_data):
-        # Handle supporting images from comma-separated string
-        supporting_images_str = validated_data.pop('supportingImagesInput', '')
-        if supporting_images_str:
-            validated_data['supporting_images'] = supporting_images_str.split(',')
+        # Pop image string
+        imgs_raw = validated_data.pop("supportingImagesInput", "")
+
+        # Convert CSV → list
+        if imgs_raw:
+            img_list = [i.strip() for i in imgs_raw.split(",") if i.strip()]
         else:
-            validated_data['supporting_images'] = []
+            img_list = []
 
-        # Assign current user automatically
-        user = self.context['request'].user
-        validated_data['user'] = user
+        validated_data["supporting_images"] = img_list
 
-        return super().create(validated_data)
+        # Add logged-in user
+        validated_data["user"] = self.context["request"].user
+
+        return Claim.objects.create(**validated_data)
 ###################################################################################################################################################################################################
 class MessageSerializer(serializers.ModelSerializer):
     sender_info = serializers.SerializerMethodField()
@@ -565,6 +586,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
