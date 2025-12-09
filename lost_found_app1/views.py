@@ -386,27 +386,32 @@ class MyItemsView(APIView):
 
 ###########################################################################################################################################################################################
 class ClaimViewSet(viewsets.ModelViewSet):
-    queryset = Claim.objects.all()
     serializer_class = ClaimSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        # Only return claims of the current user
-        return self.queryset.filter(user=self.request.user)
+        return Claim.objects.filter(user=self.request.user).order_by("-created_at")
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data, context={'request': request})
+
         if serializer.is_valid():
-            self.perform_create(serializer)
+            try:
+                self.perform_create(serializer)
+            except IntegrityError:
+                return Response({
+                    "error": "You have already submitted a claim for this item."
+                }, status=status.HTTP_400_BAD_REQUEST)
+
             return Response({
-                "data": serializer.data,
-                "message": "Claim submitted successfully! Admin will review your claim."
+                "message": "Claim submitted successfully!",
+                "data": serializer.data
             }, status=status.HTTP_201_CREATED)
-        else:
-            return Response({
-                "error": "Validation Error",
-                "details": serializer.errors
-            }, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            "error": "Validation Error",
+            "details": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
 #################################################################################################################################################################################################
 class MessageViewSet(viewsets.ModelViewSet):
     serializer_class = MessageSerializer
@@ -936,6 +941,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
