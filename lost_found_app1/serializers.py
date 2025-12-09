@@ -402,16 +402,15 @@ class ClaimSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """
         Safely create a Claim instance.
-        Ensure no NULL is passed to fields that the database expects as NOT NULL.
+        Ensures no NULL is passed to NOT NULL DB columns.
         """
         user = self.context['request'].user
-        found_item = validated_data['found_item']
+        found_item = validated_data.get('found_item')
 
-        # Use empty string if value is None
         claim_description = validated_data.get('claimDescription') or ""
         proof_of_ownership = validated_data.get('proofOfOwnership') or ""
-        supporting_images = validated_data.get('supportingImages', [])
-        status = validated_data.get('status', 'pending')
+        supporting_images = validated_data.get('supportingImages') or []
+        status = validated_data.get('status') or 'pending'
         admin_notes = validated_data.get('adminNotes') or ""
 
         return Claim.objects.create(
@@ -540,6 +539,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
