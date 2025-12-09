@@ -211,18 +211,14 @@ class Claim(models.Model):
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='claims')
-    found_item = models.ForeignKey('FoundItem', on_delete=models.CASCADE, related_name='claims')
+    found_item = models.ForeignKey(FoundItem, on_delete=models.CASCADE, related_name='claims')
     
-    # Allow NULL and blank, safe for database inserts
-    claim_description = models.TextField(blank=True, null=True)
-    proof_of_ownership = models.TextField(blank=True, null=True)
-    
-    # JSON for list of images
+    claimDescription = models.TextField()
+    proof_of_ownership = models.TextField(blank=True)
     supporting_images = models.JSONField(default=list, blank=True)
-
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
-    admin_notes = models.TextField(blank=True, null=True, default="")
-
+    admin_notes = models.TextField(null=True, blank=True, default="")
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     resolved_at = models.DateTimeField(blank=True, null=True)
@@ -295,4 +291,5 @@ class ImageSearchLog(models.Model):
     def __str__(self):
 
         return f"Image Search - {self.search_type} - {self.created_at.strftime('%Y-%m-%d %H:%M')}"
+
 
