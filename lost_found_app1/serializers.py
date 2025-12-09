@@ -398,6 +398,14 @@ class ClaimSerializer(serializers.ModelSerializer):
     class Meta:
         model = Claim
         fields = '__all__'
+        extra_kwargs = {
+            'found_item': {'required': False, 'allow_null': True},
+            'claim_description': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'proof_of_ownership': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'supporting_images': {'required': False, 'allow_null': True, 'allow_blank': True},
+            'status': {'required': False, 'allow_blank': True, 'allow_null': True},
+            'admin_notes': {'required': False, 'allow_blank': True, 'allow_null': True},
+        }
 ###################################################################################################################################################################################################
 class MessageSerializer(serializers.ModelSerializer):
     sender_info = serializers.SerializerMethodField()
@@ -515,6 +523,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
