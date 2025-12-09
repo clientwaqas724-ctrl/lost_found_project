@@ -904,10 +904,10 @@ def admin_dashboard(request):
             'type': 'claim',
             'title': f"Claim by {claim.user.username}",
             'status': claim.status,
+            'description': claim.claimDescription,  # optional
             'date': claim.created_at,
             'id': claim.id
         })
-    
     for user in recent_users:
         recent_activities.append({
             'type': 'user_registration',
@@ -966,6 +966,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
