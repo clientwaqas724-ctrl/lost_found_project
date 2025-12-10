@@ -390,28 +390,42 @@ class ClaimViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return Claim.objects.filter(user=self.request.user).order_by("-created_at")
+        return Claim.objects.filter(
+            user=self.request.user
+        ).order_by('-created_at')
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data, context={'request': request})
+        serializer = self.get_serializer(
+            data=request.data,
+            context={'request': request}
+        )
+        serializer.is_valid(raise_exception=True)
 
-        if serializer.is_valid():
-            try:
-                self.perform_create(serializer)
-            except IntegrityError:
-                return Response({
-                    "error": "You have already submitted a claim for this item."
-                }, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            self.perform_create(serializer)
+        except IntegrityError:
+            return Response(
+                {"detail": "You have already submitted a claim for this item."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-            return Response({
-                "message": "Claim submitted successfully!",
-                "data": serializer.data
-            }, status=status.HTTP_201_CREATED)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-        return Response({
-            "error": "Validation Error",
-            "details": serializer.errors
-        }, status=status.HTTP_400_BAD_REQUEST)
+    def update(self, request, *args, **kwargs):
+        partial = True  # allow partial updates
+        instance = self.get_object()
+
+        serializer = self.get_serializer(
+            instance,
+            data=request.data,
+            partial=partial,
+            context={'request': request}
+        )
+
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+
+        return Response(serializer.data, status=200)
 #################################################################################################################################################################################################
 class MessageViewSet(viewsets.ModelViewSet):
     serializer_class = MessageSerializer
@@ -941,6 +955,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
