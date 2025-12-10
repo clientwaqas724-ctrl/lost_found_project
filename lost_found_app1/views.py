@@ -391,7 +391,9 @@ class ClaimViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     pagination_class = None
 
-    # --- GET Queryset ---
+    # ==========================================
+    #   GET ALL CLAIMS (Admin vs User-specific)
+    # ==========================================
     def get_queryset(self):
         user = self.request.user
         if user.is_staff or user.user_type == 'admin':
@@ -406,13 +408,13 @@ class ClaimViewSet(viewsets.ModelViewSet):
         return context
 
     # ==========================================
-    #   FIXED AND SIMPLIFIED CREATE METHOD
+    #   CREATE CLAIM (Robustly checks for foundItem ID)
     # ==========================================
     def create(self, request, *args, **kwargs):
         data = request.data.copy()
         found_item_id = data.get('foundItem')
 
-        # 1. ENSURE foundItem ID is provided (FIX FOR YOUR ERROR)
+        # FIX: Ensure foundItem ID is provided (Resolves the primary error on POST)
         if not found_item_id:
             return Response({
                 "success": False,
@@ -420,7 +422,6 @@ class ClaimViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            # 2. Check if FoundItem exists
             found_item = FoundItem.objects.get(id=found_item_id)
         except FoundItem.DoesNotExist:
             return Response({
@@ -433,11 +434,9 @@ class ClaimViewSet(viewsets.ModelViewSet):
                 "message": "Invalid found item ID format"
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        # 3. Check for existing pending claim
+        # Check for existing pending claim
         existing_claim = Claim.objects.filter(
-            user=request.user,
-            foundItem=found_item,
-            status='pending'
+            user=request.user, foundItem=found_item, status='pending'
         ).exists()
         
         if existing_claim:
@@ -446,7 +445,7 @@ class ClaimViewSet(viewsets.ModelViewSet):
                 "message": "You already have a pending claim for this item"
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        # 4. Prepare data for serializer validation/creation
+        # Prepare data for serializer validation/creation
         serializer_data = {
             'foundItem': found_item.id, 
             'claimDescription': data.get('claimDescription', ''),
@@ -455,15 +454,13 @@ class ClaimViewSet(viewsets.ModelViewSet):
             'status': data.get('status', 'pending')
         }
 
-        # 5. Validate and Save the Claim
         serializer = self.get_serializer(data=serializer_data)
         
         try:
             serializer.is_valid(raise_exception=True) 
-            # serializer.save() calls the create method in ClaimSerializer which handles notifications
-            claim = serializer.save(user=request.user, foundItem=found_item) # Pass objects to .save()
+            # Pass user and foundItem objects to serializer.save()
+            claim = serializer.save(user=request.user, foundItem=found_item) 
             
-            # 6. Success Response
             response_serializer = self.get_serializer(claim)
             return Response({
                 "success": True,
@@ -472,21 +469,16 @@ class ClaimViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_201_CREATED)
         
         except serializers.ValidationError as e:
-            return Response({
-                "success": False,
-                "message": "Validation error",
-                "errors": e.detail
-            }, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"success": False, "message": "Validation error", "errors": e.detail}, 
+                            status=status.HTTP_400_BAD_REQUEST)
         
         except Exception as e:
             print(f"Error creating claim: {str(e)}")
-            return Response({
-                "success": False,
-                "message": f"Internal error creating claim: {str(e)}"
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"success": False, "message": f"Internal error creating claim: {str(e)}"}, 
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     # ==========================================
-    #   LIST CLAIMS (Unchanged)
+    #   LIST CLAIMS (with filtering)
     # ==========================================
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
@@ -504,7 +496,7 @@ class ClaimViewSet(viewsets.ModelViewSet):
         })
 
     # ==========================================
-    #   RETRIEVE SINGLE CLAIM (Unchanged)
+    #   RETRIEVE SINGLE CLAIM
     # ==========================================
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -523,7 +515,7 @@ class ClaimViewSet(viewsets.ModelViewSet):
         })
 
     # ==========================================
-    #   UPDATE CLAIM (PUT/PATCH) (Unchanged)
+    #   UPDATE CLAIM (PUT/PATCH) - Ignores foundItem update
     # ==========================================
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop('partial', False)
@@ -537,10 +529,13 @@ class ClaimViewSet(viewsets.ModelViewSet):
             
         data = request.data.copy()
         
+        # FIX: Ensure foundItem cannot be updated in the view level
+        data.pop('foundItem', None)
+        
         if "supportingImages" not in data:
             data["supportingImages"] = instance.supportingImages
             
-        # Only admins can change status or add adminNotes
+        # Permission checks for status/adminNotes
         if request.user.user_type != 'admin':
             if 'status' in data and data['status'] != instance.status:
                 return Response({
@@ -574,7 +569,7 @@ class ClaimViewSet(viewsets.ModelViewSet):
         return self.update(request, *args, **kwargs)
 
     # ==========================================
-    #   DELETE CLAIM (Unchanged)
+    #   DELETE CLAIM
     # ==========================================
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -604,10 +599,7 @@ class ClaimViewSet(viewsets.ModelViewSet):
     def approve(self, request, pk=None):
         """Admin action to approve a claim"""
         if request.user.user_type != 'admin':
-            return Response({
-                "success": False,
-                "message": "Only administrators can approve claims"
-            }, status=status.HTTP_403_FORBIDDEN)
+            return Response({"success": False, "message": "Only administrators can approve claims"}, status=status.HTTP_403_FORBIDDEN)
             
         instance = self.get_object()
         instance.status = 'approved'
@@ -615,28 +607,18 @@ class ClaimViewSet(viewsets.ModelViewSet):
         
         # Create notification
         Notification.objects.create(
-            user=instance.user,
-            notification_type='claim_update',
-            title='Claim Approved',
-            message=f'Your claim for "{instance.foundItem.title}" has been approved by admin.',
-            claim=instance
+            user=instance.user, notification_type='claim_update', title='Claim Approved',
+            message=f'Your claim for "{instance.foundItem.title}" has been approved by admin.', claim=instance
         )
         
         serializer = self.get_serializer(instance)
-        return Response({
-            "success": True,
-            "message": "Claim approved successfully",
-            "data": serializer.data
-        })
+        return Response({"success": True, "message": "Claim approved successfully", "data": serializer.data})
 
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
         """Admin action to reject a claim"""
         if request.user.user_type != 'admin':
-            return Response({
-                "success": False,
-                "message": "Only administrators can reject claims"
-            }, status=status.HTTP_403_FORBIDDEN)
+            return Response({"success": False, "message": "Only administrators can reject claims"}, status=status.HTTP_403_FORBIDDEN)
             
         instance = self.get_object()
         instance.status = 'rejected'
@@ -644,19 +626,12 @@ class ClaimViewSet(viewsets.ModelViewSet):
         
         # Create notification
         Notification.objects.create(
-            user=instance.user,
-            notification_type='claim_update',
-            title='Claim Rejected',
-            message=f'Your claim for "{instance.foundItem.title}" has been rejected by admin.',
-            claim=instance
+            user=instance.user, notification_type='claim_update', title='Claim Rejected',
+            message=f'Your claim for "{instance.foundItem.title}" has been rejected by admin.', claim=instance
         )
         
         serializer = self.get_serializer(instance)
-        return Response({
-            "success": True,
-            "message": "Claim rejected successfully",
-            "data": serializer.data
-        })
+        return Response({"success": True, "message": "Claim rejected successfully", "data": serializer.data})
 
     @action(detail=False, methods=['get'])
     def my_claims(self, request):
@@ -665,10 +640,8 @@ class ClaimViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(claims, many=True)
         
         return Response({
-            "success": True,
-            "message": "User claims retrieved successfully",
-            "count": claims.count(),
-            "data": serializer.data
+            "success": True, "message": "User claims retrieved successfully",
+            "count": claims.count(), "data": serializer.data
         })
 
     @action(detail=False, methods=['get'], permission_classes=[IsAdminOnly])
@@ -678,10 +651,8 @@ class ClaimViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(claims, many=True)
         
         return Response({
-            "success": True,
-            "message": "Pending claims retrieved successfully",
-            "count": claims.count(),
-            "data": serializer.data
+            "success": True, "message": "Pending claims retrieved successfully",
+            "count": claims.count(), "data": serializer.data
         })
 
     @action(detail=False, methods=['get'])
@@ -689,34 +660,23 @@ class ClaimViewSet(viewsets.ModelViewSet):
         """Get claims for a specific found item"""
         found_item_id = request.query_params.get('found_item_id')
         if not found_item_id:
-            return Response({
-                "success": False,
-                "message": "found_item_id parameter is required"
-            }, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"success": False, "message": "found_item_id parameter is required"}, status=status.HTTP_400_BAD_REQUEST)
             
         try:
             found_item = FoundItem.objects.get(id=found_item_id)
             claims = Claim.objects.filter(foundItem=found_item)
             
             if request.user.user_type != 'admin' and found_item.user != request.user:
-                return Response({
-                    "success": False,
-                    "message": "You don't have permission to view claims for this item"
-                }, status=status.HTTP_403_FORBIDDEN)
+                return Response({"success": False, "message": "You don't have permission to view claims for this item"}, status=status.HTTP_403_FORBIDDEN)
                 
             serializer = self.get_serializer(claims, many=True)
             return Response({
-                "success": True,
-                "message": "Claims retrieved successfully",
-                "count": claims.count(),
-                "data": serializer.data
+                "success": True, "message": "Claims retrieved successfully",
+                "count": claims.count(), "data": serializer.data
             })
             
         except FoundItem.DoesNotExist:
-            return Response({
-                "success": False,
-                "message": "Found item not found"
-            }, status=status.HTTP_404_NOT_FOUND)
+            return Response({"success": False, "message": "Found item not found"}, status=status.HTTP_404_NOT_FOUND)
 #################################################################################################################################################################################################
 #################################################################################################################################################################################################
 class MessageViewSet(viewsets.ModelViewSet):
@@ -1247,6 +1207,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
