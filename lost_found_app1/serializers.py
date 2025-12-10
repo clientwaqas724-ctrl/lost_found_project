@@ -396,17 +396,10 @@ class UserItemsSerializer(serializers.Serializer):
 
 ###################################################################################################################################################################################################
 ###################################################################################################################################################################################################
-###################################################################################################################################################################################################
-###################################################################################################################################################################################################
 class ClaimSerializer(serializers.ModelSerializer):
     user_info = serializers.SerializerMethodField(read_only=True)
     found_item_info = serializers.SerializerMethodField(read_only=True)
     supporting_images_list = serializers.SerializerMethodField(read_only=True)
-
-    # Ensure DRF treats foundItem as a PK relation (expects an integer id in POST)
-    foundItem = serializers.PrimaryKeyRelatedField(
-        queryset=FoundItem.objects.all()
-    )
 
     class Meta:
         model = Claim
@@ -426,107 +419,138 @@ class ClaimSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ['id', 'user', 'created_at', 'updated_at']
+        
+        # --- FIX: Ensure foundItem is required on input ---
+        extra_kwargs = {
+            'foundItem': {'required': True}
+        }
 
     def get_user_info(self, obj):
+        if not obj.user: return None
         return {
             'id': obj.user.id,
             'username': obj.user.username,
             'email': obj.user.email,
             'full_name': obj.user.get_full_name(),
-            'phone_number': getattr(obj.user, 'phone_number', None)
+            'phone_number': obj.user.phone_number
         }
 
     def get_found_item_info(self, obj):
-        fi = obj.foundItem
+        if not obj.foundItem: return None
+            
         return {
-            'id': fi.id,
-            'title': fi.title,
-            'description': fi.description,
-            'image_url': fi.item_image.url if fi.item_image else None,
-            'found_location': fi.found_location,
-            'found_date': fi.found_date,
-            'status': fi.status,
+            'id': obj.foundItem.id,
+            'title': obj.foundItem.title,
+            'description': obj.foundItem.description,
+            'image_url': obj.foundItem.item_image.url if obj.foundItem.item_image else None,
+            'found_location': obj.foundItem.found_location,
+            'found_date': obj.foundItem.found_date,
+            'status': obj.foundItem.status,
             'user': {
-                'id': fi.user.id,
-                'username': fi.user.username,
-                'email': fi.user.email,
-                'full_name': fi.user.get_full_name()
+                'id': obj.foundItem.user.id,
+                'username': obj.foundItem.user.username,
+                'email': obj.foundItem.user.email,
+                'full_name': obj.foundItem.user.get_full_name()
             }
         }
 
     def get_supporting_images_list(self, obj):
+        """Return list of supporting images"""
         if obj.supportingImages:
-            return [img.strip() for img in str(obj.supportingImages).split(',') if img.strip()]
+            return [img.strip() for img in obj.supportingImages.split(',') if img.strip()]
         return []
 
-    def validate(self, attrs):
-        # Add any extra validation if needed. Example:
-        # if attrs['foundItem'].status == 'returned': raise ...
-        return attrs
+    def validate(self, data):
+        """Validate claim data"""
+        # Field validation is handled automatically by DRF due to ModelSerializer
+        return data
 
     def create(self, validated_data):
-        request = self.context.get('request')
-        user = None
-        if request and hasattr(request, 'user'):
-            user = request.user
-
-        found_item = validated_data.get('foundItem')
-
-        # Prevent duplicate pending claim for same user+item
-        if user:
-            if Claim.objects.filter(user=user, foundItem=found_item, status='pending').exists():
-                raise serializers.ValidationError({"foundItem": "You already have a pending claim for this item."})
-
-        # Set the user on creation (serializer read_only_fields has user so set here)
+        """
+        FIX: Updated create to explicitly use the 'user' and 'foundItem' objects 
+        passed from the ViewSet via serializer.save().
+        """
+        # Pop objects passed from the viewset's serializer.save()
+        found_item = validated_data.pop('foundItem') 
+        user = validated_data.pop('user')
+        
+        # Check if user already has a pending claim for this item
+        existing_claim = Claim.objects.filter(
+            user=user,
+            foundItem=found_item,
+            status='pending'
+        ).exists()
+        
+        if existing_claim:
+            raise serializers.ValidationError({
+                "foundItem": "You already have a pending claim for this item."
+            })
+            
+        # Create the claim
         claim = Claim.objects.create(
             user=user,
             foundItem=found_item,
-            claimDescription=validated_data.get('claimDescription', ''),
-            proofOfOwnership=validated_data.get('proofOfOwnership', ''),
-            supportingImages=validated_data.get('supportingImages', None),
-            status=validated_data.get('status', 'pending'),
-            adminNotes=validated_data.get('adminNotes', None)
+            **validated_data
         )
-
-        # Notifications (same behavior as your earlier implementation)
-        if user:
-            Notification.objects.create(
-                user=user,
-                notification_type='system',
-                title='Claim Submitted',
-                message=f'Your claim for "{claim.foundItem.title}" has been submitted successfully.',
-                claim=claim
-            )
-
+        
+        # --- Notification Logic ---
+        Notification.objects.create(
+            user=user,
+            notification_type='system',
+            title='Claim Submitted',
+            message=f'Your claim for "{claim.foundItem.title}" has been submitted successfully.',
+            claim=claim
+        )
+        
         admin_users = User.objects.filter(user_type='admin', is_active=True)
         for admin in admin_users:
             Notification.objects.create(
                 user=admin,
                 notification_type='claim_update',
                 title='New Claim Submitted',
-                message=f'A new claim has been submitted for "{claim.foundItem.title}" by {user.username if user else "anonymous"}.',
+                message=f'A new claim has been submitted for "{claim.foundItem.title}" by {user.username}.',
                 claim=claim
             )
-
-        # Notify the item owner
+            
         Notification.objects.create(
             user=found_item.user,
             notification_type='claim_update',
             title='Item Claimed',
-            message=f'Your found item "{found_item.title}" has been claimed by {user.username if user else "someone"}.',
+            message=f'Your found item "{found_item.title}" has been claimed by {user.username}.',
             claim=claim
         )
-
+        # --- End Notification Logic ---
+            
         return claim
 
     def update(self, instance, validated_data):
-        # Let ModelSerializer handle normal updates (status, admin notes etc.)
-        instance = super().update(instance, validated_data)
-
+        """Update an existing claim"""
         request = self.context.get('request')
-        # notify on status change is best handled outside here by comparing old vs new if needed
-        return instance
-###################################################################################################################################################################################################
+        
+        # Update the claim
+        updated_claim = super().update(instance, validated_data)
+        
+        # Create notification for status updates
+        if 'status' in validated_data and validated_data['status'] != instance.status:
+            Notification.objects.create(
+                user=updated_claim.user,
+                notification_type='claim_update',
+                title=f'Claim Status Updated',
+                message=f'Your claim for "{updated_claim.foundItem.title}" has been updated to {updated_claim.get_status_display()}.',
+                claim=updated_claim
+            )
+            
+            # Also notify the item owner if status changed by admin
+            if request and request.user.user_type == 'admin' and validated_data['status'] in ['approved', 'rejected']:
+                Notification.objects.create(
+                    user=updated_claim.foundItem.user,
+                    notification_type='claim_update',
+                    title=f'Claim {validated_data["status"].title()}',
+                    message=f'Your found item "{updated_claim.foundItem.title}" has a claim that was {validated_data["status"]}.',
+                    claim=updated_claim
+                )
+        
+        return updated_claim
 ###################################################################################################################################################################################################
 ###################################################################################################################################################################################################
 class MessageSerializer(serializers.ModelSerializer):
@@ -645,6 +669,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
