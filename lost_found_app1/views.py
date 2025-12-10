@@ -386,168 +386,84 @@ class MyItemsView(APIView):
 
 ###########################################################################################################################################################################################
 class ClaimViewSet(viewsets.ModelViewSet):
-    permission_classes = [permissions.IsAuthenticated]
-    lookup_field = 'id'
-    
-    def get_serializer_class(self):
-        """
-        Use different serializer based on request source
-        Android uses snake_case, Web might use camelCase
-        """
-        user_agent = self.request.META.get('HTTP_USER_AGENT', '').lower()
-        content_type = self.request.content_type
-        
-        # Check if this is likely from Android
-        is_android = 'android' in user_agent or 'okhttp' in user_agent
-        
-        # OR check the data format
-        data = self.request.data
-        if data:
-            has_snake_case = any(key in data for key in ['found_item', 'claim_description', 'proof_of_ownership'])
-            has_camel_case = any(key in data for key in ['foundItem', 'claimDescription', 'proofOfOwnership'])
-            
-            if has_snake_case and not has_camel_case:
-                # Definitely Android
-                return AndroidClaimSerializer
-        
-        # Default to Android serializer since that's what's failing
-        return AndroidClaimSerializer
-    
+    serializer_class = ClaimSerializer
+    permission_classes = [IsAuthenticated]
+
+    # ==========================================
+    #   GET ALL CLAIMS (Admin vs User-specific)
+    # ==========================================
     def get_queryset(self):
         user = self.request.user
-        if user.is_staff:
-            return Claim.objects.all().order_by('-created_at')
-        else:
-            return Claim.objects.filter(foundItem__user=user).order_by('-created_at')
-    
+        if user.is_staff:  # Admin sees all claims
+            return Claim.objects.all().order_by("-created_at")
+        else:  # Normal users see only their claims
+            return Claim.objects.filter(
+                foundItem__user=user
+            ).order_by("-created_at")
+
+    # ==========================================
+    #   CREATE CLAIM
+    # ==========================================
     def create(self, request, *args, **kwargs):
-        """
-        Override create to handle Android's snake_case data
-        """
-        # Log what we receive
-        logger.info(f"=== CLAIM CREATE REQUEST ===")
-        logger.info(f"User: {request.user.username}")
-        logger.info(f"User Agent: {request.META.get('HTTP_USER_AGENT')}")
-        logger.info(f"Content-Type: {request.content_type}")
-        logger.info(f"Data received: {request.data}")
-        logger.info(f"Data type: {type(request.data)}")
-        logger.info(f"Data keys: {list(request.data.keys()) if request.data else 'No data'}")
-        
-        # Check if data is coming as form-data or JSON
-        if request.content_type == 'application/x-www-form-urlencoded' or request.content_type.startswith('multipart/form-data'):
-            # Android might be sending as form data
-            data = request.data.dict() if hasattr(request.data, 'dict') else dict(request.data)
-        else:
-            data = request.data
-        
-        # If data is empty, try to parse body
-        if not data:
-            try:
-                import json
-                body = request.body.decode('utf-8')
-                if body:
-                    data = json.loads(body)
-            except:
-                pass
-        
-        logger.info(f"Processed data: {data}")
-        
-        # Check for required fields
-        required_fields = ['found_item', 'claim_description', 'proof_of_ownership']
-        missing_fields = []
-        
-        for field in required_fields:
-            if field not in data:
-                # Try camelCase version
-                camel_field = self._snake_to_camel(field)
-                if camel_field in data:
-                    data[field] = data.pop(camel_field)
-                else:
-                    missing_fields.append(field)
-        
-        if missing_fields:
-            logger.error(f"Missing fields: {missing_fields}")
-            return Response({
-                'success': False,
-                'message': 'Missing required fields',
-                'missing_fields': missing_fields,
-                'hint': 'Android should send: found_item, claim_description, proof_of_ownership'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Create a new mutable data dict with the correct field names
-        serializer_data = {
-            'found_item': data.get('found_item'),
-            'claim_description': data.get('claim_description'),
-            'proof_of_ownership': data.get('proof_of_ownership'),
-            'supporting_images': data.get('supporting_images', '')
-        }
-        
-        logger.info(f"Serializer data: {serializer_data}")
-        
-        serializer = self.get_serializer(data=serializer_data)
-        
-        try:
-            serializer.is_valid(raise_exception=True)
-            claim = serializer.save()
-            
-            logger.info(f"Claim created successfully: {claim.id}")
-            
-            return Response({
-                'success': True,
-                'message': 'Claim submitted successfully!',
-                'data': serializer.data
-            }, status=status.HTTP_201_CREATED)
-            
-        except serializers.ValidationError as e:
-            logger.error(f"Validation error: {e.detail}")
-            return Response({
-                'success': False,
-                'message': 'Validation error',
-                'errors': e.detail
-            }, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            logger.error(f"Unexpected error: {str(e)}", exc_info=True)
-            return Response({
-                'success': False,
-                'message': 'An unexpected error occurred',
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
-    def _snake_to_camel(self, snake_str):
-        """Convert snake_case to camelCase"""
-        components = snake_str.split('_')
-        return components[0] + ''.join(x.title() for x in components[1:])
-    
-    @action(detail=False, methods=['post'], url_path='debug')
-    def debug_endpoint(self, request):
-        """
-        Special endpoint for debugging Android requests
-        """
-        logger.info("=== DEBUG ENDPOINT CALLED ===")
-        logger.info(f"Headers: {dict(request.headers)}")
-        logger.info(f"Content-Type: {request.content_type}")
-        logger.info(f"Body raw: {request.body}")
-        
-        try:
-            import json
-            body = request.body.decode('utf-8')
-            logger.info(f"Body decoded: {body}")
-            if body:
-                parsed = json.loads(body)
-                logger.info(f"Body parsed: {parsed}")
-        except Exception as e:
-            logger.error(f"Parse error: {e}")
-        
-        logger.info(f"Request data: {request.data}")
-        
-        return Response({
-            'success': True,
-            'message': 'Debug information logged',
-            'headers': dict(request.headers),
-            'content_type': request.content_type,
-            'body_raw': str(request.body),
-            'data_received': str(request.data)
-        })
+        data = request.data.copy()
+
+        # Handle optional supportingImages
+        if "supportingImages" not in data:
+            data["supportingImages"] = None
+
+        serializer = self.get_serializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response(
+            {
+                "message": "Claim submitted successfully",
+                "data": serializer.data
+            },
+            status=status.HTTP_201_CREATED
+        )
+
+    # ==========================================
+    #   UPDATE CLAIM (PUT/PATCH)
+    # ==========================================
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+
+        data = request.data.copy()
+
+        # Keep old images if not sent
+        if "supportingImages" not in data:
+            data["supportingImages"] = instance.supportingImages
+
+        serializer = self.get_serializer(instance, data=data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response(
+            {
+                "message": "Claim updated successfully",
+                "data": serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
+
+    def partial_update(self, request, *args, **kwargs):
+        kwargs["partial"] = True
+        return self.update(request, *args, **kwargs)
+
+    # ==========================================
+    #   GET SINGLE CLAIM BY ID
+    # ==========================================
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(
+            {
+                "message": "Claim retrieved successfully",
+                "data": serializer.data
+            }
+        )
 #################################################################################################################################################################################################
 class MessageViewSet(viewsets.ModelViewSet):
     serializer_class = MessageSerializer
@@ -1077,6 +993,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
