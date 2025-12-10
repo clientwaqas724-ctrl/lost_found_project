@@ -401,18 +401,21 @@ class UserItemsSerializer(serializers.Serializer):
 class ClaimSerializer(serializers.ModelSerializer):
     user = serializers.CharField(source='user.get_full_name', read_only=True)
     foundItemTitle = serializers.CharField(source='foundItem.title', read_only=True)
-    supportingImagesList = serializers.SerializerMethodField()
-
     class Meta:
         model = Claim
         fields = [
-            'id', 'user', 'foundItem', 'foundItemTitle', 'claimDescription',
-            'proofOfOwnership', 'supportingImages', 'supportingImagesList', 'status',
-            'adminNotes', 'created_at', 'updated_at'
+            'id',
+            'user',
+            'foundItem',
+            'foundItemTitle',
+            'claimDescription',
+            'proofOfOwnership',
+            'supportingImages',
+            'status',
+            'adminNotes',
+            'created_at',
+            'updated_at'
         ]
-    
-    def get_supportingImagesList(self, obj):
-        return obj.get_supporting_images_list()
 ###################################################################################################################################################################################################
 ###################################################################################################################################################################################################
 class MessageSerializer(serializers.ModelSerializer):
@@ -531,6 +534,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
