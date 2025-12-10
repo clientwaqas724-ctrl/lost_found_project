@@ -402,57 +402,53 @@ class ClaimViewSet(viewsets.ModelViewSet):
             ).order_by("-created_at")
 
     # ==========================================
-    #   CREATE CLAIM - FIXED VERSION
+    #   CREATE CLAIM - SIMPLIFIED
     # ==========================================
     def create(self, request, *args, **kwargs):
         data = request.data.copy()
-        user = request.user
         
-        # Handle optional supportingImages - ensure it's a string
-        if "supportingImages" not in data or data["supportingImages"] is None:
-            data["supportingImages"] = ""
-        elif isinstance(data["supportingImages"], list):
-            # Convert list to comma-separated string if needed
-            data["supportingImages"] = ",".join(data["supportingImages"])
+        # Log the incoming data for debugging
+        print("Received data from mobile:", data)
         
-        # Validate that foundItem exists and belongs to a different user
-        try:
-            found_item_id = data.get("foundItem")
-            if not found_item_id:
-                return Response(
-                    {"error": "foundItem field is required"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            found_item = FoundItem.objects.get(id=found_item_id)
-            
-            # Check if user is trying to claim their own item
-            if found_item.user == user:
-                return Response(
-                    {"error": "You cannot claim your own found item"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-        except FoundItem.DoesNotExist:
+        # Ensure foundItem is present
+        if "foundItem" not in data:
             return Response(
-                {"error": "Found item not found"},
-                status=status.HTTP_404_NOT_FOUND
+                {
+                    "error": "foundItem field is required",
+                    "detail": "Please provide the ID of the found item"
+                },
+                status=status.HTTP_400_BAD_REQUEST
             )
         
-        serializer = self.get_serializer(data=data)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
+        # Convert supportingImages to string if it's a list
+        if "supportingImages" in data and isinstance(data["supportingImages"], list):
+            data["supportingImages"] = ",".join([str(img) for img in data["supportingImages"]])
         
-        return Response(
-            {
-                "message": "Claim submitted successfully",
-                "data": serializer.data
-            },
-            status=status.HTTP_201_CREATED
-        )
+        serializer = self.get_serializer(data=data)
+        
+        try:
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            
+            return Response(
+                {
+                    "message": "Claim submitted successfully",
+                    "data": serializer.data
+                },
+                status=status.HTTP_201_CREATED
+            )
+            
+        except serializers.ValidationError as e:
+            return Response(
+                {
+                    "error": "Validation error",
+                    "detail": e.detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
     # ==========================================
-    #   UPDATE CLAIM (PUT/PATCH) - FIXED VERSION
+    #   UPDATE CLAIM (PUT/PATCH) - SIMPLIFIED
     # ==========================================
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop("partial", False)
@@ -461,38 +457,38 @@ class ClaimViewSet(viewsets.ModelViewSet):
 
         # Check permissions - only allow updates to certain fields for non-admin
         user = request.user
-        if not user.is_staff:
-            # Regular users can only update their own claims
-            if instance.foundItem.user != user:
-                return Response(
-                    {"error": "You can only update your own claims"},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            
-            # Regular users can only update these fields
-            allowed_fields = ["claimDescription", "proofOfOwnership", "supportingImages"]
-            for field in list(data.keys()):
-                if field not in allowed_fields:
-                    data.pop(field, None)
-        
-        # Handle supportingImages
-        if "supportingImages" not in data:
-            data["supportingImages"] = instance.supportingImages
-        elif isinstance(data["supportingImages"], list):
-            # Convert list to comma-separated string if needed
-            data["supportingImages"] = ",".join(data["supportingImages"])
+        if not user.is_staff and instance.foundItem.user != user:
+            return Response(
+                {"error": "You can only update your own claims"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Handle supportingImages if present
+        if "supportingImages" in data and isinstance(data["supportingImages"], list):
+            data["supportingImages"] = ",".join([str(img) for img in data["supportingImages"]])
         
         serializer = self.get_serializer(instance, data=data, partial=partial)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
         
-        return Response(
-            {
-                "message": "Claim updated successfully",
-                "data": serializer.data
-            },
-            status=status.HTTP_200_OK
-        )
+        try:
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            
+            return Response(
+                {
+                    "message": "Claim updated successfully",
+                    "data": serializer.data
+                },
+                status=status.HTTP_200_OK
+            )
+            
+        except serializers.ValidationError as e:
+            return Response(
+                {
+                    "error": "Validation error",
+                    "detail": e.detail
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
     def partial_update(self, request, *args, **kwargs):
         kwargs["partial"] = True
@@ -519,58 +515,6 @@ class ClaimViewSet(viewsets.ModelViewSet):
                 "data": serializer.data
             }
         )
-
-    # ==========================================
-    #   DELETE CLAIM
-    # ==========================================
-    def destroy(self, request, *args, **kwargs):
-        instance = self.get_object()
-        
-        # Check permissions
-        user = request.user
-        if not user.is_staff and instance.foundItem.user != user:
-            return Response(
-                {"error": "You can only delete your own claims"},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        instance.delete()
-        return Response(
-            {"message": "Claim deleted successfully"},
-            status=status.HTTP_200_OK
-        )
-
-    # ==========================================
-    #   ADDITIONAL CUSTOM ENDPOINT
-    # ==========================================
-    @action(detail=False, methods=['get'], url_path='by-found-item/(?P<found_item_id>[^/.]+)')
-    def get_claims_by_found_item(self, request, found_item_id=None):
-        """Get all claims for a specific found item"""
-        user = request.user
-        
-        try:
-            found_item = FoundItem.objects.get(id=found_item_id)
-            
-            # Check permissions - user must own the found item or be admin
-            if not user.is_staff and found_item.user != user:
-                return Response(
-                    {"error": "You can only view claims for your own found items"},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            
-            claims = Claim.objects.filter(foundItem=found_item).order_by("-created_at")
-            serializer = self.get_serializer(claims, many=True)
-            
-            return Response({
-                "message": f"Found {claims.count()} claim(s) for this item",
-                "data": serializer.data
-            })
-            
-        except FoundItem.DoesNotExist:
-            return Response(
-                {"error": "Found item not found"},
-                status=status.HTTP_404_NOT_FOUND
-            )
 #################################################################################################################################################################################################
 class MessageViewSet(viewsets.ModelViewSet):
     serializer_class = MessageSerializer
@@ -1100,6 +1044,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
