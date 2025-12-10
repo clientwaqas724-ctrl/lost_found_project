@@ -396,30 +396,22 @@ class UserItemsSerializer(serializers.Serializer):
 
 ###################################################################################################################################################################################################
 class ClaimSerializer(serializers.ModelSerializer):
+
+    # FRONTEND → BACKEND mapping
     foundItem = serializers.PrimaryKeyRelatedField(
         queryset=FoundItem.objects.all(),
         write_only=True,
-        required=True,
         source='found_item'
     )
 
-    claimDescription = serializers.CharField(
-        required=True,
-        allow_blank=False,
-        source="claimDescription"
-    )
-
+    # These names MUST match serializer names only — NO source needed
+    claimDescription = serializers.CharField(required=True, allow_blank=False)
     proofOfOwnership = serializers.CharField(
-        required=True,
-        allow_blank=False,
-        source="proof_of_ownership"
+        required=True, allow_blank=False, source="proof_of_ownership"
     )
 
     supportingImagesInput = serializers.CharField(
-        write_only=True,
-        required=False,
-        allow_blank=True,
-        allow_null=True
+        write_only=True, required=False, allow_blank=True, allow_null=True
     )
 
     class Meta:
@@ -435,7 +427,7 @@ class ClaimSerializer(serializers.ModelSerializer):
             "admin_notes",
             "created_at",
             "updated_at",
-            "resolved_at"
+            "resolved_at",
         ]
         read_only_fields = ["supporting_images", "status"]
 
@@ -459,14 +451,12 @@ class ClaimSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         images_raw = validated_data.pop("supportingImagesInput", "")
 
-        # Convert CSV → list
         if images_raw:
-            images_list = [x.strip() for x in images_raw.split(",") if x.strip()]
+            image_list = [x.strip() for x in images_raw.split(",") if x.strip()]
         else:
-            images_list = []
+            image_list = []
 
-        validated_data["supporting_images"] = images_list
-
+        validated_data["supporting_images"] = image_list
         validated_data["user"] = self.context["request"].user
 
         return Claim.objects.create(**validated_data)
@@ -597,6 +587,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
