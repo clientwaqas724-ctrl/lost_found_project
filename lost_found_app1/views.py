@@ -395,12 +395,9 @@ class ClaimViewSet(viewsets.ModelViewSet):
         ).order_by('-created_at')
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(
-            data=request.data,
-            context={'request': request}
-        )
+        serializer = self.get_serializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
-
+    
         try:
             self.perform_create(serializer)
         except IntegrityError:
@@ -408,9 +405,8 @@ class ClaimViewSet(viewsets.ModelViewSet):
                 {"detail": "You have already submitted a claim for this item."},
                 status=status.HTTP_400_BAD_REQUEST
             )
-
+    
         return Response(serializer.data, status=status.HTTP_201_CREATED)
-
     def update(self, request, *args, **kwargs):
         partial = True  # allow partial updates
         instance = self.get_object()
@@ -955,6 +951,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
