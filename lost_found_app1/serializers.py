@@ -403,6 +403,11 @@ class ClaimSerializer(serializers.ModelSerializer):
     found_item_info = serializers.SerializerMethodField(read_only=True)
     supporting_images_list = serializers.SerializerMethodField(read_only=True)
 
+    # Ensure DRF treats foundItem as a PK relation (expects an integer id in POST)
+    foundItem = serializers.PrimaryKeyRelatedField(
+        queryset=FoundItem.objects.all()
+    )
+
     class Meta:
         model = Claim
         fields = [
@@ -428,120 +433,99 @@ class ClaimSerializer(serializers.ModelSerializer):
             'username': obj.user.username,
             'email': obj.user.email,
             'full_name': obj.user.get_full_name(),
-            'phone_number': obj.user.phone_number
+            'phone_number': getattr(obj.user, 'phone_number', None)
         }
 
     def get_found_item_info(self, obj):
+        fi = obj.foundItem
         return {
-            'id': obj.foundItem.id,
-            'title': obj.foundItem.title,
-            'description': obj.foundItem.description,
-            'image_url': obj.foundItem.item_image.url if obj.foundItem.item_image else None,
-            'found_location': obj.foundItem.found_location,
-            'found_date': obj.foundItem.found_date,
-            'status': obj.foundItem.status,
+            'id': fi.id,
+            'title': fi.title,
+            'description': fi.description,
+            'image_url': fi.item_image.url if fi.item_image else None,
+            'found_location': fi.found_location,
+            'found_date': fi.found_date,
+            'status': fi.status,
             'user': {
-                'id': obj.foundItem.user.id,
-                'username': obj.foundItem.user.username,
-                'email': obj.foundItem.user.email,
-                'full_name': obj.foundItem.user.get_full_name()
+                'id': fi.user.id,
+                'username': fi.user.username,
+                'email': fi.user.email,
+                'full_name': fi.user.get_full_name()
             }
         }
 
     def get_supporting_images_list(self, obj):
-        """Return list of supporting images"""
         if obj.supportingImages:
-            return [img.strip() for img in obj.supportingImages.split(',') if img.strip()]
+            return [img.strip() for img in str(obj.supportingImages).split(',') if img.strip()]
         return []
 
-    def validate(self, data):
-        """Validate claim data - REMOVED self-claim restriction"""
-        request = self.context.get('request')
-        
-        if request and request.method == 'POST':
-            # Users can claim ANY found item, including their own
-            pass
-            
-        return data
+    def validate(self, attrs):
+        # Add any extra validation if needed. Example:
+        # if attrs['foundItem'].status == 'returned': raise ...
+        return attrs
 
     def create(self, validated_data):
-        """Create a new claim"""
         request = self.context.get('request')
-        if request and request.user:
-            found_item = validated_data.get('foundItem')
-            
-            # REMOVED: No restriction on claiming own items
-            # Users can claim any found item
-            
-            # Check if user already has a pending claim for this item
-            existing_claim = Claim.objects.filter(
-                user=request.user,
-                foundItem=found_item,
-                status='pending'
-            ).exists()
-            
-            if existing_claim:
-                raise serializers.ValidationError({
-                    "foundItem": "You already have a pending claim for this item."
-                })
-            
-            # Set the user
-            validated_data['user'] = request.user
-            
-            # Create the claim
-            claim = super().create(validated_data)
-            
-            # Create notification for the user who submitted claim
+        user = None
+        if request and hasattr(request, 'user'):
+            user = request.user
+
+        found_item = validated_data.get('foundItem')
+
+        # Prevent duplicate pending claim for same user+item
+        if user:
+            if Claim.objects.filter(user=user, foundItem=found_item, status='pending').exists():
+                raise serializers.ValidationError({"foundItem": "You already have a pending claim for this item."})
+
+        # Set the user on creation (serializer read_only_fields has user so set here)
+        claim = Claim.objects.create(
+            user=user,
+            foundItem=found_item,
+            claimDescription=validated_data.get('claimDescription', ''),
+            proofOfOwnership=validated_data.get('proofOfOwnership', ''),
+            supportingImages=validated_data.get('supportingImages', None),
+            status=validated_data.get('status', 'pending'),
+            adminNotes=validated_data.get('adminNotes', None)
+        )
+
+        # Notifications (same behavior as your earlier implementation)
+        if user:
             Notification.objects.create(
-                user=request.user,
+                user=user,
                 notification_type='system',
                 title='Claim Submitted',
                 message=f'Your claim for "{claim.foundItem.title}" has been submitted successfully.',
                 claim=claim
             )
-            
-            # Create notification for the admin
-            admin_users = User.objects.filter(user_type='admin', is_active=True)
-            for admin in admin_users:
-                Notification.objects.create(
-                    user=admin,
-                    notification_type='claim_update',
-                    title='New Claim Submitted',
-                    message=f'A new claim has been submitted for "{claim.foundItem.title}" by {request.user.username}.',
-                    claim=claim
-                )
-            
-            return claim
-        raise serializers.ValidationError({"user": "User authentication required."})
+
+        admin_users = User.objects.filter(user_type='admin', is_active=True)
+        for admin in admin_users:
+            Notification.objects.create(
+                user=admin,
+                notification_type='claim_update',
+                title='New Claim Submitted',
+                message=f'A new claim has been submitted for "{claim.foundItem.title}" by {user.username if user else "anonymous"}.',
+                claim=claim
+            )
+
+        # Notify the item owner
+        Notification.objects.create(
+            user=found_item.user,
+            notification_type='claim_update',
+            title='Item Claimed',
+            message=f'Your found item "{found_item.title}" has been claimed by {user.username if user else "someone"}.',
+            claim=claim
+        )
+
+        return claim
 
     def update(self, instance, validated_data):
-        """Update an existing claim"""
+        # Let ModelSerializer handle normal updates (status, admin notes etc.)
+        instance = super().update(instance, validated_data)
+
         request = self.context.get('request')
-        
-        # Update the claim
-        updated_claim = super().update(instance, validated_data)
-        
-        # Create notification for status updates
-        if 'status' in validated_data and validated_data['status'] != instance.status:
-            Notification.objects.create(
-                user=updated_claim.user,
-                notification_type='claim_update',
-                title=f'Claim Status Updated',
-                message=f'Your claim for "{updated_claim.foundItem.title}" has been updated to {updated_claim.get_status_display()}.',
-                claim=updated_claim
-            )
-            
-            # Also notify the item owner if status changed by admin
-            if request.user.user_type == 'admin' and validated_data['status'] in ['approved', 'rejected']:
-                Notification.objects.create(
-                    user=updated_claim.foundItem.user,
-                    notification_type='claim_update',
-                    title=f'Claim {validated_data["status"].title()}',
-                    message=f'Your found item "{updated_claim.foundItem.title}" has a claim that was {validated_data["status"]}.',
-                    claim=updated_claim
-                )
-        
-        return updated_claim
+        # notify on status change is best handled outside here by comparing old vs new if needed
+        return instance
 ###################################################################################################################################################################################################
 ###################################################################################################################################################################################################
 ###################################################################################################################################################################################################
@@ -661,6 +645,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
