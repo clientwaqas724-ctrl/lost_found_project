@@ -396,7 +396,6 @@ class UserItemsSerializer(serializers.Serializer):
 
 ###################################################################################################################################################################################################
 class ClaimSerializer(serializers.ModelSerializer):
-    # Frontend → Model field mapping
     foundItem = serializers.PrimaryKeyRelatedField(
         queryset=FoundItem.objects.all(),
         write_only=True,
@@ -406,13 +405,14 @@ class ClaimSerializer(serializers.ModelSerializer):
 
     claimDescription = serializers.CharField(
         required=True,
-        allow_blank=False
+        allow_blank=False,
+        source="claimDescription"
     )
 
     proofOfOwnership = serializers.CharField(
         required=True,
         allow_blank=False,
-        source='proof_of_ownership'
+        source="proof_of_ownership"
     )
 
     supportingImagesInput = serializers.CharField(
@@ -440,13 +440,16 @@ class ClaimSerializer(serializers.ModelSerializer):
         read_only_fields = ["supporting_images", "status"]
 
     def validate(self, attrs):
-        # Minimum 20 chars
-        if len(attrs.get("claimDescription", "")) < 20:
+
+        cd = attrs.get("claimDescription", "")
+        po = attrs.get("proof_of_ownership", "")
+
+        if len(cd) < 20:
             raise serializers.ValidationError({
                 "claimDescription": "Please enter at least 20 characters."
             })
 
-        if len(attrs.get("proof_of_ownership", "")) < 20:
+        if len(po) < 20:
             raise serializers.ValidationError({
                 "proofOfOwnership": "Please enter at least 20 characters."
             })
@@ -454,21 +457,29 @@ class ClaimSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
-        # Pop image string
-        imgs_raw = validated_data.pop("supportingImagesInput", "")
+        images_raw = validated_data.pop("supportingImagesInput", "")
 
         # Convert CSV → list
-        if imgs_raw:
-            img_list = [i.strip() for i in imgs_raw.split(",") if i.strip()]
+        if images_raw:
+            images_list = [x.strip() for x in images_raw.split(",") if x.strip()]
         else:
-            img_list = []
+            images_list = []
 
-        validated_data["supporting_images"] = img_list
+        validated_data["supporting_images"] = images_list
 
-        # Add logged-in user
         validated_data["user"] = self.context["request"].user
 
         return Claim.objects.create(**validated_data)
+
+    def update(self, instance, validated_data):
+        images_raw = validated_data.pop("supportingImagesInput", None)
+
+        if images_raw is not None:
+            instance.supporting_images = [
+                x.strip() for x in images_raw.split(",") if x.strip()
+            ]
+
+        return super().update(instance, validated_data)
 ###################################################################################################################################################################################################
 class MessageSerializer(serializers.ModelSerializer):
     sender_info = serializers.SerializerMethodField()
@@ -586,6 +597,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
