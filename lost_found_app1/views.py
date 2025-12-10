@@ -389,17 +389,14 @@ class MyItemsView(APIView):
 class ClaimViewSet(viewsets.ModelViewSet):
     serializer_class = ClaimSerializer
     permission_classes = [IsAuthenticated]
-    
     pagination_class = None
 
-    # ==========================================
-    #   GET ALL CLAIMS (Admin vs User-specific)
-    # ==========================================
+    # --- GET Queryset ---
     def get_queryset(self):
         user = self.request.user
-        if user.is_staff or user.user_type == 'admin':  # Admin sees all claims
+        if user.is_staff or user.user_type == 'admin':
             return Claim.objects.all().order_by("-created_at")
-        else:  # Normal users see only their claims
+        else:
             return Claim.objects.filter(user=user).order_by("-created_at")
 
     def get_serializer_context(self):
@@ -409,97 +406,96 @@ class ClaimViewSet(viewsets.ModelViewSet):
         return context
 
     # ==========================================
-    #   CREATE CLAIM - FIXED FLOW
+    #   FIXED AND SIMPLIFIED CREATE METHOD
     # ==========================================
     def create(self, request, *args, **kwargs):
         data = request.data.copy()
-        
-        # 1. Handle optional supportingImages (convert empty string to None)
-        if "supportingImages" not in data or data.get("supportingImages") == "":
-            data["supportingImages"] = None
-        
         found_item_id = data.get('foundItem')
 
-        # 2. Check and Retrieve FoundItem Object
+        # 1. ENSURE foundItem ID is provided (FIX FOR YOUR ERROR)
         if not found_item_id:
-             # Manual check for clear error message, though serializer will also catch it
             return Response({
                 "success": False,
-                "message": "Found item ID is required (foundItem)",
-                "errors": {"foundItem": ["Found item ID is required."]}
+                "message": "Found item ID is required"
             }, status=status.HTTP_400_BAD_REQUEST)
-            
+
         try:
-            # Retrieve the FoundItem object
+            # 2. Check if FoundItem exists
             found_item = FoundItem.objects.get(id=found_item_id)
-            # Replace the ID with the object in the data for the serializer's create method
-            data['foundItem'] = found_item
-            
         except FoundItem.DoesNotExist:
             return Response({
                 "success": False,
-                "message": "Found item not found",
-                "errors": {"foundItem": ["Item with this ID was not found."]}
+                "message": "Found item not found"
             }, status=status.HTTP_404_NOT_FOUND)
         except ValueError:
             return Response({
                 "success": False,
-                "message": "Invalid found item ID format",
-                "errors": {"foundItem": ["Invalid format for found item ID."]}
+                "message": "Invalid found item ID format"
             }, status=status.HTTP_400_BAD_REQUEST)
-
-        # 3. Use standard DRF serializer flow
-        serializer = self.get_serializer(data=data)
         
-        if serializer.is_valid():
-            try:
-                # Call serializer.save(), passing the current user and found_item object explicitly.
-                claim = serializer.save(user=request.user, foundItem=found_item) 
-                
-                response_serializer = self.get_serializer(claim)
-
-                return Response({
-                    "success": True,
-                    "message": "Claim submitted successfully",
-                    "data": response_serializer.data
-                }, status=status.HTTP_201_CREATED)
-                
-            except Exception as e:
-                # Catch errors raised from the serializer's create (e.g., existing claim)
-                if isinstance(e, serializers.ValidationError):
-                    return Response({
-                        "success": False,
-                        "message": "Validation error during claim submission",
-                        "errors": e.detail
-                    }, status=status.HTTP_400_BAD_REQUEST)
-                
-                print(f"Error creating claim: {str(e)}")
-                return Response({
-                    "success": False,
-                    "message": f"Error creating claim: {str(e)}"
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        # 3. Check for existing pending claim
+        existing_claim = Claim.objects.filter(
+            user=request.user,
+            foundItem=found_item,
+            status='pending'
+        ).exists()
         
-        # 4. Handle remaining validation errors 
-        return Response({
-            "success": False,
-            "message": "Validation error",
-            "errors": serializer.errors
-        }, status=status.HTTP_400_BAD_REQUEST)
+        if existing_claim:
+            return Response({
+                "success": False,
+                "message": "You already have a pending claim for this item"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # 4. Prepare data for serializer validation/creation
+        serializer_data = {
+            'foundItem': found_item.id, 
+            'claimDescription': data.get('claimDescription', ''),
+            'proofOfOwnership': data.get('proofOfOwnership', ''),
+            'supportingImages': data.get('supportingImages'), 
+            'status': data.get('status', 'pending')
+        }
+
+        # 5. Validate and Save the Claim
+        serializer = self.get_serializer(data=serializer_data)
+        
+        try:
+            serializer.is_valid(raise_exception=True) 
+            # serializer.save() calls the create method in ClaimSerializer which handles notifications
+            claim = serializer.save(user=request.user, foundItem=found_item) # Pass objects to .save()
+            
+            # 6. Success Response
+            response_serializer = self.get_serializer(claim)
+            return Response({
+                "success": True,
+                "message": "Claim submitted successfully",
+                "data": response_serializer.data
+            }, status=status.HTTP_201_CREATED)
+        
+        except serializers.ValidationError as e:
+            return Response({
+                "success": False,
+                "message": "Validation error",
+                "errors": e.detail
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        except Exception as e:
+            print(f"Error creating claim: {str(e)}")
+            return Response({
+                "success": False,
+                "message": f"Internal error creating claim: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     # ==========================================
-    #   LIST CLAIMS (with filtering)
+    #   LIST CLAIMS (Unchanged)
     # ==========================================
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
-        
-        # Add filtering options
         status_filter = request.query_params.get('status', None)
         if status_filter:
             queryset = queryset.filter(status=status_filter)
         
         serializer = self.get_serializer(queryset, many=True)
         
-        # Return custom response format
         return Response({
             "success": True,
             "message": "Claims retrieved successfully",
@@ -508,7 +504,7 @@ class ClaimViewSet(viewsets.ModelViewSet):
         })
 
     # ==========================================
-    #   RETRIEVE SINGLE CLAIM
+    #   RETRIEVE SINGLE CLAIM (Unchanged)
     # ==========================================
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -518,7 +514,7 @@ class ClaimViewSet(viewsets.ModelViewSet):
                 "success": False,
                 "message": "You don't have permission to view this claim"
             }, status=status.HTTP_403_FORBIDDEN)
-        
+            
         serializer = self.get_serializer(instance)
         return Response({
             "success": True,
@@ -527,7 +523,7 @@ class ClaimViewSet(viewsets.ModelViewSet):
         })
 
     # ==========================================
-    #   UPDATE CLAIM (PUT/PATCH)
+    #   UPDATE CLAIM (PUT/PATCH) (Unchanged)
     # ==========================================
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop('partial', False)
@@ -538,37 +534,35 @@ class ClaimViewSet(viewsets.ModelViewSet):
                 "success": False,
                 "message": "You don't have permission to update this claim"
             }, status=status.HTTP_403_FORBIDDEN)
-        
+            
         data = request.data.copy()
         
         if "supportingImages" not in data:
             data["supportingImages"] = instance.supportingImages
-        
+            
+        # Only admins can change status or add adminNotes
         if request.user.user_type != 'admin':
             if 'status' in data and data['status'] != instance.status:
                 return Response({
                     "success": False,
                     "message": "Only administrators can change claim status"
                 }, status=status.HTTP_403_FORBIDDEN)
-            
+                
             if 'adminNotes' in data:
                 return Response({
                     "success": False,
                     "message": "Only administrators can add admin notes"
                 }, status=status.HTTP_403_FORBIDDEN)
-        
+            
         serializer = self.get_serializer(instance, data=data, partial=partial)
         if serializer.is_valid():
-            # If foundItem ID is present in data, we need to convert it to an object 
-            # before saving if it wasn't done in the create method. 
-            # Since update is usually for description/proof, we trust the default DRF handling here.
-            serializer.save() 
+            serializer.save()
             return Response({
                 "success": True,
                 "message": "Claim updated successfully",
                 "data": serializer.data
             }, status=status.HTTP_200_OK)
-        
+            
         return Response({
             "success": False,
             "message": "Validation error",
@@ -580,7 +574,7 @@ class ClaimViewSet(viewsets.ModelViewSet):
         return self.update(request, *args, **kwargs)
 
     # ==========================================
-    #   DELETE CLAIM
+    #   DELETE CLAIM (Unchanged)
     # ==========================================
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -590,13 +584,13 @@ class ClaimViewSet(viewsets.ModelViewSet):
                 "success": False,
                 "message": "You don't have permission to delete this claim"
             }, status=status.HTTP_403_FORBIDDEN)
-        
+            
         if instance.status != 'pending' and request.user.user_type != 'admin':
             return Response({
                 "success": False,
                 "message": "Only pending claims can be deleted"
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+            
         instance.delete()
         return Response({
             "success": True,
@@ -614,11 +608,12 @@ class ClaimViewSet(viewsets.ModelViewSet):
                 "success": False,
                 "message": "Only administrators can approve claims"
             }, status=status.HTTP_403_FORBIDDEN)
-        
+            
         instance = self.get_object()
         instance.status = 'approved'
         instance.save()
         
+        # Create notification
         Notification.objects.create(
             user=instance.user,
             notification_type='claim_update',
@@ -642,11 +637,12 @@ class ClaimViewSet(viewsets.ModelViewSet):
                 "success": False,
                 "message": "Only administrators can reject claims"
             }, status=status.HTTP_403_FORBIDDEN)
-        
+            
         instance = self.get_object()
         instance.status = 'rejected'
         instance.save()
         
+        # Create notification
         Notification.objects.create(
             user=instance.user,
             notification_type='claim_update',
@@ -697,7 +693,7 @@ class ClaimViewSet(viewsets.ModelViewSet):
                 "success": False,
                 "message": "found_item_id parameter is required"
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+            
         try:
             found_item = FoundItem.objects.get(id=found_item_id)
             claims = Claim.objects.filter(foundItem=found_item)
@@ -707,7 +703,7 @@ class ClaimViewSet(viewsets.ModelViewSet):
                     "success": False,
                     "message": "You don't have permission to view claims for this item"
                 }, status=status.HTTP_403_FORBIDDEN)
-            
+                
             serializer = self.get_serializer(claims, many=True)
             return Response({
                 "success": True,
@@ -1251,6 +1247,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
