@@ -387,19 +387,51 @@ class MyItemsView(APIView):
 ###########################################################################################################################################################################################
 ###########################################################################################################################################################################################
 class ClaimViewSet(viewsets.ModelViewSet):
-    queryset = Claim.objects.all()
     serializer_class = ClaimSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = None  # No pagination
 
+    # --------------------------------------------------------
+    # GET QUERYSET
+    # --------------------------------------------------------
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff or user.user_type == "admin":
+            return Claim.objects.all().order_by("-created_at")
+        return Claim.objects.filter(user=user).order_by("-created_at")
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["request"] = self.request
+        return context
+
+    # --------------------------------------------------------
+    # FIXED CLAIM CREATION
+    # Accepts Android snake_case field names
+    # --------------------------------------------------------
     def create(self, request, *args, **kwargs):
-        """
-        Create a new claim
-        """
-        data = request.data.copy()
-        found_item_id = data.get('foundItem')
+        incoming = request.data.copy()
 
+        # 🔥 FIX #1 — MAP Android snake_case → Django camelCase
+        mapping = {
+            "found_item": "foundItem",
+            "claim_description": "claimDescription",
+            "proof_of_ownership": "proofOfOwnership",
+            "supporting_images": "supportingImages",
+        }
+        for android_key, django_key in mapping.items():
+            if android_key in incoming:
+                incoming[django_key] = incoming.get(android_key)
+
+        # Supporting images optional
+        if incoming.get("supportingImages", "") == "":
+            incoming["supportingImages"] = None
+
+        # --------------------------------------------------------
+        # Validate found item ID
+        # --------------------------------------------------------
+        found_item_id = incoming.get("foundItem")
         if not found_item_id:
-            logger.error(f"Missing foundItem in request: {data}")
             return Response({
                 "success": False,
                 "message": "Found item ID is required"
@@ -413,77 +445,90 @@ class ClaimViewSet(viewsets.ModelViewSet):
                 "message": "Found item not found"
             }, status=status.HTTP_404_NOT_FOUND)
 
+        # --------------------------------------------------------
+        # Prevent duplicate pending claim
+        # --------------------------------------------------------
+        exists = Claim.objects.filter(
+            user=request.user,
+            foundItem=found_item,
+            status="pending"
+        ).exists()
+
+        if exists:
+            return Response({
+                "success": False,
+                "message": "You already have a pending claim for this item"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # --------------------------------------------------------
+        # Prepare serializer data
+        # --------------------------------------------------------
+        serializer = self.get_serializer(data={
+            "foundItem": found_item.id,
+            "claimDescription": incoming.get("claimDescription", ""),
+            "proofOfOwnership": incoming.get("proofOfOwnership", ""),
+            "supportingImages": incoming.get("supportingImages"),
+            "status": incoming.get("status", "pending"),
+        })
+
+        if not serializer.is_valid():
+            return Response({
+                "success": False,
+                "message": "Validation error",
+                "errors": serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # --------------------------------------------------------
+        # Create claim
+        # --------------------------------------------------------
         claim = Claim.objects.create(
             user=request.user,
             foundItem=found_item,
-            claimDescription=data.get('claimDescription', '').strip(),
-            proofOfOwnership=data.get('proofOfOwnership', '').strip(),
-            supportingImages=data.get('supportingImages', None),
-            status=data.get('status', 'pending'),
-            adminNotes=data.get('adminNotes', None)
+            claimDescription=serializer.validated_data["claimDescription"],
+            proofOfOwnership=serializer.validated_data["proofOfOwnership"],
+            supportingImages=serializer.validated_data["supportingImages"],
+            status=serializer.validated_data["status"],
         )
 
-        serializer = self.get_serializer(claim)
+        # --------------------------------------------------------
+        # Notifications
+        # --------------------------------------------------------
+        Notification.objects.create(
+            user=request.user,
+            notification_type="system",
+            title="Claim Submitted",
+            message=f'Your claim for "{found_item.title}" has been submitted successfully.',
+            claim=claim
+        )
+
+        admin_users = User.objects.filter(user_type="admin", is_active=True)
+        for admin in admin_users:
+            Notification.objects.create(
+                user=admin,
+                notification_type="claim_update",
+                title="New Claim Submitted",
+                message=f'New claim submitted for "{found_item.title}" by {request.user.username}.',
+                claim=claim
+            )
+
+        # Notify found item owner
+        Notification.objects.create(
+            user=found_item.user,
+            notification_type="claim_update",
+            title="Item Claimed",
+            message=f'Your item "{found_item.title}" has been claimed by {request.user.username}.',
+            claim=claim
+        )
+
+        # --------------------------------------------------------
+        # Final Response
+        # --------------------------------------------------------
+        response_serializer = self.get_serializer(claim)
         return Response({
             "success": True,
-            "message": "Claim created successfully",
-            "data": serializer.data
+            "message": "Claim submitted successfully",
+            "data": response_serializer.data
         }, status=status.HTTP_201_CREATED)
-
-    def update(self, request, *args, **kwargs):
-        """
-        Update a claim by ID
-        """
-        partial = kwargs.pop('partial', False)
-        instance = self.get_object()
-        data = request.data.copy()
-        found_item_id = data.get('foundItem')
-
-        if found_item_id:
-            try:
-                found_item = FoundItem.objects.get(id=found_item_id)
-                instance.foundItem = found_item
-            except FoundItem.DoesNotExist:
-                return Response({
-                    "success": False,
-                    "message": "Found item not found"
-                }, status=status.HTTP_404_NOT_FOUND)
-
-        instance.claimDescription = data.get('claimDescription', instance.claimDescription).strip()
-        instance.proofOfOwnership = data.get('proofOfOwnership', instance.proofOfOwnership).strip()
-        instance.supportingImages = data.get('supportingImages', instance.supportingImages)
-        instance.status = data.get('status', instance.status)
-        instance.adminNotes = data.get('adminNotes', instance.adminNotes)
-        instance.save()
-
-        serializer = self.get_serializer(instance)
-        return Response({
-            "success": True,
-            "message": "Claim updated successfully",
-            "data": serializer.data
-        }, status=status.HTTP_200_OK)
-
-    def list(self, request, *args, **kwargs):
-        """
-        List all claims for the current user
-        """
-        queryset = self.queryset.filter(user=request.user)
-        serializer = self.get_serializer(queryset, many=True)
-        return Response({
-            "success": True,
-            "data": serializer.data
-        }, status=status.HTTP_200_OK)
-
-    def retrieve(self, request, *args, **kwargs):
-        """
-        Retrieve a claim by ID
-        """
-        instance = self.get_object()
-        serializer = self.get_serializer(instance)
-        return Response({
-            "success": True,
-            "data": serializer.data
-        }, status=status.HTTP_200_OK)
 #################################################################################################################################################################################################
 #################################################################################################################################################################################################
 class MessageViewSet(viewsets.ModelViewSet):
@@ -1014,6 +1059,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
