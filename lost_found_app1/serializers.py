@@ -396,12 +396,19 @@ class UserItemsSerializer(serializers.Serializer):
 
 ###################################################################################################################################################################################################
 class ClaimSerializer(serializers.ModelSerializer):
-
+    foundItem = serializers.PrimaryKeyRelatedField(
+        queryset=FoundItem.objects.all(),
+        required=True
+    )
+    
     supportingImages = serializers.CharField(
         required=False,
         allow_blank=True,
         allow_null=True
     )
+    
+    claimDescription = serializers.CharField(required=True)
+    proofOfOwnership = serializers.CharField(required=True)
 
     class Meta:
         model = Claim
@@ -415,6 +422,7 @@ class ClaimSerializer(serializers.ModelSerializer):
             "adminNotes",
             "created_at",
         ]
+        read_only_fields = ["status", "adminNotes", "created_at"]
 ###################################################################################################################################################################################################
 class MessageSerializer(serializers.ModelSerializer):
     sender_info = serializers.SerializerMethodField()
@@ -532,6 +540,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
