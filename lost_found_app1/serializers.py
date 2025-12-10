@@ -10,6 +10,8 @@ import os
 import uuid
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 import json
+from django.contrib.auth import get_user_model
+User = get_user_model()
 ###################################################################################################################################################################################################
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(
@@ -529,6 +531,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
