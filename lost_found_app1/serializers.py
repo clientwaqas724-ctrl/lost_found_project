@@ -418,10 +418,10 @@ class ClaimSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        # 'user' is set by the ViewSet's .save(user=request.user)
+        # 'user' is set by the ViewSet, not by client input
         read_only_fields = ['id', 'user', 'created_at', 'updated_at']
 
-    # --- Read-Only Fields ---
+    # --- Read-Only Get Methods ---
     def get_user_info(self, obj):
         if not obj.user: return None
         return {
@@ -453,76 +453,57 @@ class ClaimSerializer(serializers.ModelSerializer):
     def get_supporting_images_list(self, obj):
         """Return list of supporting images"""
         if obj.supportingImages:
-            return [img.strip() for img in obj.supportingImages.split(',') if img.strip()]
+            return [tag.strip() for tag in obj.supportingImages.split(',') if tag.strip()]
         return []
 
     # --- Create Method (Handles Notifications) ---
     def create(self, validated_data):
         """Creates a new claim and handles all notification generation."""
-        
-        # 1. Create the claim instance using base ModelSerializer logic
         claim = super().create(validated_data)
-        
-        # --- Notification Logic ---
         
         # A. Notification for the user who submitted claim
         Notification.objects.create(
-            user=claim.user,
-            notification_type='system',
-            title='Claim Submitted',
-            message=f'Your claim for "{claim.foundItem.title}" has been submitted successfully.',
-            claim=claim
+            user=claim.user, notification_type='system', title='Claim Submitted',
+            message=f'Your claim for "{claim.foundItem.title}" has been submitted successfully.', claim=claim
         )
-        
-        # B. Notification for the admin (Assuming User model is accessible)
+        # B. Notification for the admin 
         admin_users = User.objects.filter(user_type='admin', is_active=True)
         for admin in admin_users:
             Notification.objects.create(
-                user=admin,
-                notification_type='claim_update',
-                title='New Claim Submitted',
-                message=f'A new claim has been submitted for "{claim.foundItem.title}" by {claim.user.username}.',
-                claim=claim
+                user=admin, notification_type='claim_update', title='New Claim Submitted',
+                message=f'A new claim has been submitted for "{claim.foundItem.title}" by {claim.user.username}.', claim=claim
             )
-        
         # C. Notification for the item owner
         Notification.objects.create(
-            user=claim.foundItem.user,
-            notification_type='claim_update',
-            title='Item Claimed',
-            message=f'Your found item "{claim.foundItem.title}" has been claimed by {claim.user.username}.',
-            claim=claim
+            user=claim.foundItem.user, notification_type='claim_update', title='Item Claimed',
+            message=f'Your found item "{claim.foundItem.title}" has been claimed by {claim.user.username}.', claim=claim
         )
-        
         return claim
     
-    # --- Update Method (Handles Status Change Notifications) ---
+    # --- Update Method (Prevents foundItem update) ---
     def update(self, instance, validated_data):
-        """Update an existing claim, creating notifications for status changes."""
-        request = self.context.get('request')
+        """Update an existing claim, preventing modification of the foundItem FK."""
         
-        # Update the claim
+        # FIX: Enforce Read-Only on foundItem: Remove foundItem from validated_data
+        # Prevents the user from changing which item the claim is about on PUT/PATCH
+        validated_data.pop('foundItem', None)
+        
+        request = self.context.get('request')
         updated_claim = super().update(instance, validated_data)
         
         # Create notification for status updates
         if 'status' in validated_data and validated_data['status'] != instance.status:
             # Notify the claimant
             Notification.objects.create(
-                user=updated_claim.user,
-                notification_type='claim_update',
-                title=f'Claim Status Updated',
-                message=f'Your claim for "{updated_claim.foundItem.title}" has been updated to {updated_claim.get_status_display()}.',
-                claim=updated_claim
+                user=updated_claim.user, notification_type='claim_update', title=f'Claim Status Updated',
+                message=f'Your claim for "{updated_claim.foundItem.title}" has been updated to {updated_claim.get_status_display()}.', claim=updated_claim
             )
             
             # Notify the item owner if status changed by admin
             if request and request.user.user_type == 'admin' and validated_data['status'] in ['approved', 'rejected']:
                 Notification.objects.create(
-                    user=updated_claim.foundItem.user,
-                    notification_type='claim_update',
-                    title=f'Claim {validated_data["status"].title()}',
-                    message=f'Your found item "{updated_claim.foundItem.title}" has a claim that was {validated_data["status"]}.',
-                    claim=updated_claim
+                    user=updated_claim.foundItem.user, notification_type='claim_update', title=f'Claim {validated_data["status"].title()}',
+                    message=f'Your found item "{updated_claim.foundItem.title}" has a claim that was {validated_data["status"]}.', claim=updated_claim
                 )
         
         return updated_claim
@@ -644,6 +625,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
