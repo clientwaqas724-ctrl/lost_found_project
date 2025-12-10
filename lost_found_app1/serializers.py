@@ -396,10 +396,8 @@ class UserItemsSerializer(serializers.Serializer):
 
 ###################################################################################################################################################################################################
 class ClaimSerializer(serializers.ModelSerializer):
-    foundItem = serializers.PrimaryKeyRelatedField(
-        queryset=FoundItem.objects.all(),
-        required=True
-    )
+    # Make foundItem accept both integer ID and string
+    foundItem = serializers.IntegerField(write_only=True, required=True)
     
     supportingImages = serializers.CharField(
         required=False,
@@ -423,6 +421,34 @@ class ClaimSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = ["status", "adminNotes", "created_at"]
+
+    def create(self, validated_data):
+        # Extract foundItem ID and convert to ForeignKey
+        found_item_id = validated_data.pop('foundItem')
+        
+        # Get the FoundItem instance
+        try:
+            found_item = FoundItem.objects.get(id=found_item_id)
+        except FoundItem.DoesNotExist:
+            raise serializers.ValidationError({"foundItem": "Found item does not exist"})
+        
+        # Check if user is trying to claim their own item
+        user = self.context['request'].user
+        if found_item.user == user:
+            raise serializers.ValidationError({"foundItem": "You cannot claim your own found item"})
+        
+        # Create the claim with the FoundItem instance
+        claim = Claim.objects.create(
+            foundItem=found_item,
+            **validated_data
+        )
+        return claim
+
+    def to_representation(self, instance):
+        # Override to show foundItem as ID in response
+        representation = super().to_representation(instance)
+        representation['foundItem'] = instance.foundItem.id
+        return representation
 ###################################################################################################################################################################################################
 class MessageSerializer(serializers.ModelSerializer):
     sender_info = serializers.SerializerMethodField()
@@ -540,6 +566,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
