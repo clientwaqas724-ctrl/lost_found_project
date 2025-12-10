@@ -387,28 +387,24 @@ class MyItemsView(APIView):
 ###########################################################################################################################################################################################
 ###########################################################################################################################################################################################
 class ClaimViewSet(viewsets.ModelViewSet):
+    queryset = Claim.objects.all()
     serializer_class = ClaimSerializer
     permission_classes = [IsAuthenticated]
-    queryset = Claim.objects.all()
-
-    def get_queryset(self):
-        user = self.request.user
-        if user.is_staff:
-            return Claim.objects.all().order_by("-created_at")
-        return Claim.objects.filter(user=user).order_by("-created_at")
 
     def create(self, request, *args, **kwargs):
+        """
+        Create a new claim
+        """
         data = request.data.copy()
-        logger.info(f"Received claim create request data: {data}")
-
-        # Get found item
         found_item_id = data.get('foundItem')
+
         if not found_item_id:
+            logger.error(f"Missing foundItem in request: {data}")
             return Response({
                 "success": False,
                 "message": "Found item ID is required"
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
         try:
             found_item = FoundItem.objects.get(id=found_item_id)
         except FoundItem.DoesNotExist:
@@ -417,23 +413,17 @@ class ClaimViewSet(viewsets.ModelViewSet):
                 "message": "Found item not found"
             }, status=status.HTTP_404_NOT_FOUND)
 
-        # Prepare data
-        claimDescription = data.get('claimDescription', '') or "No description provided"
-        proofOfOwnership = data.get('proofOfOwnership', '') or "No proof provided"
-        supportingImages = data.get('supportingImages', None)
-
         claim = Claim.objects.create(
             user=request.user,
             foundItem=found_item,
-            claimDescription=claimDescription,
-            proofOfOwnership=proofOfOwnership,
-            supportingImages=supportingImages,
+            claimDescription=data.get('claimDescription', '').strip(),
+            proofOfOwnership=data.get('proofOfOwnership', '').strip(),
+            supportingImages=data.get('supportingImages', None),
             status=data.get('status', 'pending'),
             adminNotes=data.get('adminNotes', None)
         )
 
         serializer = self.get_serializer(claim)
-        logger.info(f"Claim created successfully: {serializer.data}")
         return Response({
             "success": True,
             "message": "Claim created successfully",
@@ -441,23 +431,26 @@ class ClaimViewSet(viewsets.ModelViewSet):
         }, status=status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
+        """
+        Update a claim by ID
+        """
         partial = kwargs.pop('partial', False)
         instance = self.get_object()
         data = request.data.copy()
-        logger.info(f"Received claim update request data: {data}")
-
         found_item_id = data.get('foundItem')
+
         if found_item_id:
             try:
-                instance.foundItem = FoundItem.objects.get(id=found_item_id)
+                found_item = FoundItem.objects.get(id=found_item_id)
+                instance.foundItem = found_item
             except FoundItem.DoesNotExist:
                 return Response({
                     "success": False,
                     "message": "Found item not found"
                 }, status=status.HTTP_404_NOT_FOUND)
 
-        instance.claimDescription = data.get('claimDescription', instance.claimDescription)
-        instance.proofOfOwnership = data.get('proofOfOwnership', instance.proofOfOwnership)
+        instance.claimDescription = data.get('claimDescription', instance.claimDescription).strip()
+        instance.proofOfOwnership = data.get('proofOfOwnership', instance.proofOfOwnership).strip()
         instance.supportingImages = data.get('supportingImages', instance.supportingImages)
         instance.status = data.get('status', instance.status)
         instance.adminNotes = data.get('adminNotes', instance.adminNotes)
@@ -471,28 +464,24 @@ class ClaimViewSet(viewsets.ModelViewSet):
         }, status=status.HTTP_200_OK)
 
     def list(self, request, *args, **kwargs):
-        queryset = self.get_queryset()
+        """
+        List all claims for the current user
+        """
+        queryset = self.queryset.filter(user=request.user)
         serializer = self.get_serializer(queryset, many=True)
         return Response({
             "success": True,
-            "message": "Claims retrieved successfully",
-            "count": queryset.count(),
             "data": serializer.data
         }, status=status.HTTP_200_OK)
 
     def retrieve(self, request, *args, **kwargs):
+        """
+        Retrieve a claim by ID
+        """
         instance = self.get_object()
-        user = request.user
-        if not user.is_staff and instance.user != user:
-            return Response({
-                "success": False,
-                "message": "You don't have permission to view this claim"
-            }, status=status.HTTP_403_FORBIDDEN)
-
         serializer = self.get_serializer(instance)
         return Response({
             "success": True,
-            "message": "Claim retrieved successfully",
             "data": serializer.data
         }, status=status.HTTP_200_OK)
 #################################################################################################################################################################################################
@@ -1025,6 +1014,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
