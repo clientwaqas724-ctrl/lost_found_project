@@ -389,40 +389,27 @@ class ClaimViewSet(viewsets.ModelViewSet):
     serializer_class = ClaimSerializer
     permission_classes = [IsAuthenticated]
 
-    # ==========================================
-    #   GET ALL CLAIMS (Admin vs User-specific)
-    # ==========================================
     def get_queryset(self):
         user = self.request.user
-        if user.is_staff:  # Admin sees all claims
+        if user.is_staff:
             return Claim.objects.all().order_by("-created_at")
-        else:  # Normal users see only their claims
+        else:
             return Claim.objects.filter(
                 foundItem__user=user
             ).order_by("-created_at")
 
-    # ==========================================
-    #   CREATE CLAIM - SIMPLIFIED
-    # ==========================================
     def create(self, request, *args, **kwargs):
         data = request.data.copy()
         
-        # Log the incoming data for debugging
-        print("Received data from mobile:", data)
-        
-        # Ensure foundItem is present
-        if "foundItem" not in data:
-            return Response(
-                {
-                    "error": "foundItem field is required",
-                    "detail": "Please provide the ID of the found item"
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Convert supportingImages to string if it's a list
-        if "supportingImages" in data and isinstance(data["supportingImages"], list):
-            data["supportingImages"] = ",".join([str(img) for img in data["supportingImages"]])
+        # Map snake_case to camelCase
+        if 'found_item' in data:
+            data['foundItem'] = data.pop('found_item')
+        if 'claim_description' in data:
+            data['claimDescription'] = data.pop('claim_description')
+        if 'proof_of_ownership' in data:
+            data['proofOfOwnership'] = data.pop('proof_of_ownership')
+        if 'supporting_images' in data:
+            data['supportingImages'] = data.pop('supporting_images')
         
         serializer = self.get_serializer(data=data)
         
@@ -447,25 +434,20 @@ class ClaimViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-    # ==========================================
-    #   UPDATE CLAIM (PUT/PATCH) - SIMPLIFIED
-    # ==========================================
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop("partial", False)
         instance = self.get_object()
         data = request.data.copy()
-
-        # Check permissions - only allow updates to certain fields for non-admin
-        user = request.user
-        if not user.is_staff and instance.foundItem.user != user:
-            return Response(
-                {"error": "You can only update your own claims"},
-                status=status.HTTP_403_FORBIDDEN
-            )
-
-        # Handle supportingImages if present
-        if "supportingImages" in data and isinstance(data["supportingImages"], list):
-            data["supportingImages"] = ",".join([str(img) for img in data["supportingImages"]])
+        
+        # Map snake_case to camelCase
+        if 'found_item' in data:
+            data['foundItem'] = data.pop('found_item')
+        if 'claim_description' in data:
+            data['claimDescription'] = data.pop('claim_description')
+        if 'proof_of_ownership' in data:
+            data['proofOfOwnership'] = data.pop('proof_of_ownership')
+        if 'supporting_images' in data:
+            data['supportingImages'] = data.pop('supporting_images')
         
         serializer = self.get_serializer(instance, data=data, partial=partial)
         
@@ -489,32 +471,6 @@ class ClaimViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
-
-    def partial_update(self, request, *args, **kwargs):
-        kwargs["partial"] = True
-        return self.update(request, *args, **kwargs)
-
-    # ==========================================
-    #   GET SINGLE CLAIM BY ID
-    # ==========================================
-    def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
-        
-        # Check permissions
-        user = request.user
-        if not user.is_staff and instance.foundItem.user != user:
-            return Response(
-                {"error": "You can only view your own claims"},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        serializer = self.get_serializer(instance)
-        return Response(
-            {
-                "message": "Claim retrieved successfully",
-                "data": serializer.data
-            }
-        )
 #################################################################################################################################################################################################
 class MessageViewSet(viewsets.ModelViewSet):
     serializer_class = MessageSerializer
@@ -1044,6 +1000,7 @@ def verify_found_item(request, item_id):
         return Response({"detail": "Item verified successfully."})
     except FoundItem.DoesNotExist:
         return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
 
 
 
