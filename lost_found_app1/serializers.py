@@ -395,85 +395,24 @@ class UserItemsSerializer(serializers.Serializer):
         return FoundItemSerializer(found_items, many=True, context=self.context).data
 
 ###################################################################################################################################################################################################
-class AndroidClaimSerializer(serializers.ModelSerializer):
-    # Accept snake_case directly - Android sends these
-    found_item = serializers.UUIDField(required=True, write_only=True)
-    claim_description = serializers.CharField(required=True, min_length=20)
-    proof_of_ownership = serializers.CharField(required=True, min_length=20)
-    supporting_images = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    status = serializers.CharField(read_only=True)
-    admin_notes = serializers.CharField(read_only=True)
-    created_at = serializers.DateTimeField(read_only=True)
-    
+class ClaimSerializer(serializers.ModelSerializer):
+    supportingImages = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True
+    )
     class Meta:
         model = Claim
         fields = [
-            'id',
-            'found_item',
-            'claim_description',
-            'proof_of_ownership',
-            'supporting_images',
-            'status',
-            'admin_notes',
-            'created_at'
+            "id",
+            "foundItem",
+            "claimDescription",
+            "proofOfOwnership",
+            "supportingImages",
+            "status",
+            "adminNotes",
+            "created_at",
         ]
-    
-    def validate(self, data):
-        # Get the found item
-        try:
-            found_item_id = data.get('found_item')
-            if not found_item_id:
-                raise serializers.ValidationError({
-                    'found_item': 'Found item ID is required'
-                })
-            
-            # Get the FoundItem instance
-            found_item = FoundItem.objects.get(id=found_item_id)
-            
-            # Check if user is claiming their own item
-            user = self.context['request'].user
-            if found_item.user == user:
-                raise serializers.ValidationError({
-                    'found_item': 'You cannot claim your own found item'
-                })
-            
-            # Add foundItem instance to validated data
-            data['foundItem'] = found_item
-            
-        except FoundItem.DoesNotExist:
-            raise serializers.ValidationError({
-                'found_item': f'Found item with ID {found_item_id} does not exist'
-            })
-        except ValueError:
-            raise serializers.ValidationError({
-                'found_item': 'Invalid found item ID format'
-            })
-        
-        return data
-    
-    def create(self, validated_data):
-        # Map snake_case to camelCase model fields
-        claim = Claim.objects.create(
-            foundItem=validated_data['foundItem'],
-            claimDescription=validated_data['claim_description'],
-            proofOfOwnership=validated_data['proof_of_ownership'],
-            supportingImages=validated_data.get('supporting_images', ''),
-            status='pending'
-        )
-        return claim
-    
-    def to_representation(self, instance):
-        # Return data in Android expected format (camelCase)
-        return {
-            'id': instance.id,
-            'foundItem': str(instance.foundItem.id),
-            'claimDescription': instance.claimDescription,
-            'proofOfOwnership': instance.proofOfOwnership,
-            'supportingImages': instance.supportingImages,
-            'status': instance.status,
-            'adminNotes': instance.adminNotes,
-            'created_at': instance.created_at
-        }
 ###################################################################################################################################################################################################
 class MessageSerializer(serializers.ModelSerializer):
     sender_info = serializers.SerializerMethodField()
