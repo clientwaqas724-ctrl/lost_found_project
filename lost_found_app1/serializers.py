@@ -397,129 +397,20 @@ class UserItemsSerializer(serializers.Serializer):
 ###################################################################################################################################################################################################
 ###################################################################################################################################################################################################
 class ClaimSerializer(serializers.ModelSerializer):
-    user_info = serializers.SerializerMethodField(read_only=True)
-    found_item_info = serializers.SerializerMethodField(read_only=True)
-    supporting_images_list = serializers.SerializerMethodField(read_only=True)
+    user = serializers.CharField(source='user.get_full_name', read_only=True)
+    foundItemTitle = serializers.CharField(source='foundItem.title', read_only=True)
+    supportingImagesList = serializers.SerializerMethodField()
 
     class Meta:
         model = Claim
         fields = [
-            "id",
-            "user",
-            "user_info",
-            "foundItem",
-            "found_item_info",
-            "claimDescription",
-            "proofOfOwnership",
-            "supportingImages",
-            "supporting_images_list",
-            "status",
-            "adminNotes",
-            "created_at",
-            "updated_at",
+            'id', 'user', 'foundItem', 'foundItemTitle', 'claimDescription',
+            'proofOfOwnership', 'supportingImages', 'supportingImagesList', 'status',
+            'adminNotes', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'user', 'created_at', 'updated_at']
-
-    def get_user_info(self, obj):
-        u = obj.user
-        if not u:
-            return None
-        return {
-            'id': getattr(u, 'id', None),
-            'username': getattr(u, 'username', None),
-            'email': getattr(u, 'email', None),
-            'full_name': u.get_full_name() if hasattr(u, 'get_full_name') else None,
-            'phone_number': getattr(u, 'phone_number', None)
-        }
-
-    def get_found_item_info(self, obj):
-        f = obj.foundItem
-        if not f:
-            return None
-        try:
-            image_url = f.item_image.url if getattr(f, 'item_image', None) else None
-        except Exception:
-            image_url = None
-        owner = getattr(f, 'user', None)
-        owner_info = None
-        if owner:
-            owner_info = {
-                'id': getattr(owner, 'id', None),
-                'username': getattr(owner, 'username', None),
-                'email': getattr(owner, 'email', None),
-                'full_name': owner.get_full_name() if hasattr(owner, 'get_full_name') else None
-            }
-        return {
-            'id': getattr(f, 'id', None),
-            'title': getattr(f, 'title', None),
-            'description': getattr(f, 'description', None),
-            'image_url': image_url,
-            'found_location': getattr(f, 'found_location', None),
-            'found_date': getattr(f, 'found_date', None),
-            'status': getattr(f, 'status', None),
-            'user': owner_info
-        }
-
-    def get_supporting_images_list(self, obj):
-        if obj.supportingImages:
-            return [img.strip() for img in obj.supportingImages.split(',') if img.strip()]
-        return []
-
-    def validate(self, data):
-        return data
-
-    def create(self, validated_data):
-        request = self.context.get('request')
-        user = request.user if request else None
-        found_item = validated_data.pop('foundItem', None)
-
-        if found_item and not isinstance(found_item, FoundItem):
-            try:
-                found_item = FoundItem.objects.get(id=found_item)
-            except Exception:
-                raise serializers.ValidationError({"foundItem": "Invalid found item."})
-
-        if not user or not user.is_authenticated:
-            raise serializers.ValidationError({"user": "User authentication required."})
-
-        existing = Claim.objects.filter(user=user, foundItem=found_item, status='pending').exists()
-        if existing:
-            raise serializers.ValidationError({"foundItem": "You already have a pending claim for this item."})
-
-        validated_data['user'] = user
-        validated_data['foundItem'] = found_item
-
-        claim = super().create(validated_data)
-
-        try:
-            Notification.objects.create(
-                user=user,
-                notification_type='system',
-                title='Claim Submitted',
-                message=f'Your claim for "{claim.foundItem.title}" has been submitted successfully.',
-                claim=claim
-            )
-            admin_users = User.objects.filter(user_type='admin', is_active=True)
-            for admin in admin_users:
-                Notification.objects.create(
-                    user=admin,
-                    notification_type='claim_update',
-                    title='New Claim Submitted',
-                    message=f'A new claim has been submitted for "{claim.foundItem.title}" by {user.username}.',
-                    claim=claim
-                )
-            if claim.foundItem.user:
-                Notification.objects.create(
-                    user=claim.foundItem.user,
-                    notification_type='claim_update',
-                    title='Item Claimed',
-                    message=f'Your found item "{claim.foundItem.title}" has been claimed by {user.username}.',
-                    claim=claim
-                )
-        except Exception:
-            pass
-
-        return claim
+    
+    def get_supportingImagesList(self, obj):
+        return obj.get_supporting_images_list()
 ###################################################################################################################################################################################################
 ###################################################################################################################################################################################################
 class MessageSerializer(serializers.ModelSerializer):
@@ -638,6 +529,7 @@ class AdminDashboardStatsSerializer(DashboardStatsSerializer):
     returned_items = serializers.IntegerField()
     claimed_items = serializers.IntegerField()
     user_registrations_today = serializers.IntegerField()
+
 
 
 
