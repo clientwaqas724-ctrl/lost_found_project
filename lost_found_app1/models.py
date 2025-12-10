@@ -207,30 +207,36 @@ class Claim(models.Model):
         on_delete=models.CASCADE,
         related_name='claims'
     )
-
+    
     claimDescription = models.TextField()
     proofOfOwnership = models.TextField()
-
-    # FIX: Android sends a string → not a list
+    
+    # This should handle both string and list
     supportingImages = models.TextField(
         null=True,
         blank=True
     )
-
+    
     status = models.CharField(
         max_length=20,
         default="pending"
     )
-
+    
     adminNotes = models.TextField(
         null=True,
         blank=True
     )
-
+    
     created_at = models.DateTimeField(auto_now_add=True)
-
+    
     def __str__(self):
         return f"Claim {self.id} for {self.foundItem.title}"
+    
+    def save(self, *args, **kwargs):
+        # Convert list to string if needed
+        if isinstance(self.supportingImages, list):
+            self.supportingImages = ",".join(self.supportingImages)
+        super().save(*args, **kwargs)
 #######################################################################################################################
 class Message(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -294,3 +300,4 @@ class ImageSearchLog(models.Model):
 
         return f"Image Search - {self.search_type} - {self.created_at.strftime('%Y-%m-%d %H:%M')}"
 #####################################################################################################################################
+
